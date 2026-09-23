@@ -22,6 +22,52 @@ mkdir -p \
     "${ROOT_DIR}/files/etc/uci-defaults"
 
 # ============================================================================
+# 6. lyaml compatibility package
+# ============================================================================
+
+LYAML_MK="${ROOT_DIR}/package/lyaml/Makefile"
+mkdir -p "$(dirname "${LYAML_MK}")"
+
+cat > "${LYAML_MK}" <<'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=lyaml
+PKG_VERSION:=0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/lyaml
+  SECTION:=lang
+  CATEGORY:=Languages
+  SUBMENU:=Lua
+  TITLE:=lyaml compatibility package for OpenWrt 19.07
+  PKGARCH:=all
+endef
+
+define Package/lyaml/description
+ Compatibility package for PassWall on OpenWrt 19.07.
+endef
+
+define Build/Prepare
+endef
+
+define Build/Configure
+endef
+
+define Build/Compile
+endef
+
+define Package/lyaml/install
+	$(INSTALL_DIR) $(1)/usr/share/lyaml
+	printf '%s\n' 'OpenWrt 19.07 compatibility stub' > $(1)/usr/share/lyaml/README
+endef
+
+$(eval $(call BuildPackage,lyaml))
+EOF
+
+
+# ============================================================================
 # 1. Xiaomi Mi Router 4 DTS
 #    基于 OpenWrt 19.07 的 MT7621 / MIR3G DTS 结构，
 #    按 Mi Router 4 官方硬件信息改为 128 MiB RAM + 128 MiB NAND。
@@ -322,18 +368,15 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 
-if "\txiaomi,mi-router-4|" not in text:
-    needle = "\txiaomi,mir3p|\\\n\txiaomi,mir3g)\n"
-    replacement = (
-        "\txiaomi,mi-router-4|\\\n"
-        "\txiaomi,mir3p|\\\n"
-        "\txiaomi,mir3g)\n"
-    )
-
-    if needle not in text:
-        raise SystemExit("ERROR: MIR3G uboot-envtools case not found")
-
-    text = text.replace(needle, replacement, 1)
+if "xiaomi,mi-router-4" not in text:
+    old = """xiaomi,mir3p|\\
+xiaomi,mir3g)"""
+    new = """xiaomi,mi-router-4|\\
+xiaomi,mir3p|\\
+xiaomi,mir3g)"""
+    if old not in text:
+        raise SystemExit("ERROR: xiaomi,mir3g uboot-envtools case not found")
+    text = text.replace(old, new, 1)
 
 path.write_text(text)
 PY
@@ -423,56 +466,51 @@ do
 done
 
 # ============================================================================
-# 8. 使用与 Go 1.26.x 匹配的 Xray 26.6.1
+# 8. Xray: use the current MIPS32 little-endian release binary.
 #
-# 当前 PassWall main 保持最新 UI。
-# Xray 26.9.x 要求 Go 1.27，而 26.x Golang feed 为 Go 1.26.x，
-# 因此 pin 到 Xray 26.6.1。
+# This avoids compiling modern Xray with the obsolete OpenWrt 19.07 Go
+# toolchain. The release asset is native for the router's mipsel_24kc CPU.
 # ============================================================================
 
 cat > "${XRAY_MK}" <<'EOF'
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xray-core
-PKG_VERSION:=26.6.1
-PKG_RELEASE:=1
+PKG_VERSION:=26.9.9
+PKG_RELEASE:=2
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/XTLS/Xray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=efe463f8e35c4e6e93a6e8d51b27bae0cd4904b9820740c3af01733efb566fee
+PKG_SOURCE:=Xray-linux-mips32le.zip
+PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core/releases/download/v$(PKG_VERSION)/
+PKG_HASH:=e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2
 
-PKG_MAINTAINER:=Tianling Shen <cnsztl@immortalwrt.org>
+PKG_MAINTAINER:=Openwrt-Passwall Organization
 PKG_LICENSE:=MPL-2.0
 PKG_LICENSE_FILES:=LICENSE
 
-PKG_BUILD_DIR:=$(BUILD_DIR)/Xray-core-$(PKG_VERSION)
-
-PKG_BUILD_DEPENDS:=golang/host
-PKG_BUILD_PARALLEL:=1
-PKG_USE_MIPS16:=0
-PKG_BUILD_FLAGS:=no-mips16
-
-GO_PKG:=github.com/xtls/xray-core
-GO_PKG_LDFLAGS:=-s -w
-GO_PKG_BUILD_PKG:=$(GO_PKG)/main
-GO_PKG_LDFLAGS_X:= \
-	$(GO_PKG)/core.build=OpenWrt \
-	$(GO_PKG)/core.version=$(PKG_VERSION)
-
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
+
+define Build/Prepare
+	rm -rf $(PKG_BUILD_DIR)
+	mkdir -p $(PKG_BUILD_DIR)
+	unzip -q $(DL_DIR)/$(PKG_SOURCE) -d $(PKG_BUILD_DIR)
+	test -x $(PKG_BUILD_DIR)/xray
+endef
+
+define Build/Compile
+endef
 
 define Package/xray-core
-  TITLE:=A platform for building proxies to bypass network restrictions
   SECTION:=net
   CATEGORY:=Network
+  TITLE:=Xray-core
   URL:=https://xtls.github.io
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle
+  DEPENDS:=+ca-bundle
 endef
 
 define Package/xray-core/description
-  Xray, Penetrates Everything. It helps you to build your own computer network.
-  It secures your network connections and thus protects your privacy.
+ Xray-core MIPS32 little-endian release binary.
 endef
 
 define Package/xray-core/conffiles
@@ -481,9 +519,8 @@ define Package/xray-core/conffiles
 endef
 
 define Package/xray-core/install
-	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
-	$(INSTALL_DIR) $(1)/usr/bin/
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/main $(1)/usr/bin/xray
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/xray $(1)/usr/bin/xray
 endef
 
 $(eval $(call BuildPackage,xray-core))
@@ -643,7 +680,7 @@ echo "RAM         : 128 MiB"
 echo "Kernel      : OpenWrt 19.07 / Linux 4.14"
 echo "PassWall    : current main"
 echo "Proxy core  : Xray 26.6.1"
-echo "Go feed     : sbwml/packages_lang_golang 26.x"
+echo "Go toolchain : not required for Xray (release binary)"
 echo "ZRAM        : 64 MiB / lz4 / 4 streams"
 echo "Conntrack   : 32768"
 echo "Flow offload: software only"
