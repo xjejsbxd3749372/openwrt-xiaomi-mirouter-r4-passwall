@@ -1,0 +1,265 @@
+name: Build OpenWrt 19.07 - Xiaomi Mi Router 4 - PassWall
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_BRANCH: openwrt-19.07
+  OPENWRT_DIR: openwrt
+  BUILD_JOBS: 4
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout build scripts
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -eux
+          sudo rm -rf /usr/local/lib/android/sdk || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo apt-get clean
+          df -h
+
+      - name: Create build swap
+        shell: bash
+        run: |
+          set -eux
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Install OpenWrt build dependencies
+        shell: bash
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential \
+            clang \
+            ccache \
+            ecj \
+            fastjar \
+            file \
+            g++ \
+            gawk \
+            gettext \
+            git \
+            libelf-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            python3 \
+            python3-distutils \
+            python3-setuptools \
+            rsync \
+            subversion \
+            swig \
+            unzip \
+            wget \
+            xsltproc \
+            zlib1g-dev \
+            zstd \
+            jq \
+            quilt \
+            default-jre-headless
+          sudo apt-get clean
+          ccache --version
+          ccache --max-size=3G
+
+      - name: Cache OpenWrt downloads and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ccache
+            openwrt/dl
+          key: openwrt-19.07-mir4-${{ runner.os }}-${{ hashFiles('.config') }}
+          restore-keys: |
+            openwrt-19.07-mir4-${{ runner.os }}-
+
+      - name: Clone OpenWrt 19.07
+        shell: bash
+        run: |
+          set -eux
+          rm -rf "${OPENWRT_DIR}"
+          git clone \
+            --depth 1 \
+            --single-branch \
+            --branch "${REPO_BRANCH}" \
+            "${REPO_URL}" \
+            "${OPENWRT_DIR}"
+
+      - name: Prepare PassWall feeds
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          bash "${GITHUB_WORKSPACE}/diy-part1.sh"
+
+      - name: Update feeds
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          ./scripts/feeds update -a
+
+      - name: Install feeds
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          ./scripts/feeds install -a
+
+      - name: Apply MIR4 and PassWall patches
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          bash "${GITHUB_WORKSPACE}/diy-part2.sh"
+
+      - name: Install build configuration
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          cp "${GITHUB_WORKSPACE}/.config" .config
+          make defconfig
+
+      - name: Validate final configuration
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+
+          grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_mir4=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y$' .config
+          grep -q '^CONFIG_PACKAGE_xray-core=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-mt7603=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-mt76x2=y$' .config
+          grep -q '^CONFIG_PACKAGE_zram-swap=y$' .config
+          grep -q '^CONFIG_IPV6=n$' .config
+
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=y$' .config
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y$' .config
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=y$' .config
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y$' .config
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=y$' .config
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadow_TLS=y$' .config
+
+          echo "===== TARGET ====="
+          grep '^CONFIG_TARGET_' .config | grep -E 'ramips|mt7621|mir4' || true
+
+          echo "===== PASSWALL ====="
+          grep '^CONFIG_PACKAGE_luci-app-passwall' .config || true
+
+          echo "===== XRAY ====="
+          grep '^CONFIG_PACKAGE_xray-core' .config || true
+
+          echo "===== MEMORY ====="
+          grep -E 'ZRAM|SWAP' .config || true
+
+      - name: Download package sources
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          make download -j8 V=s
+
+      - name: Compile firmware
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -o pipefail
+          make -j"${BUILD_JOBS}" V=s 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
+
+      - name: Collect firmware
+        if: success()
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+
+          TARGET_DIR="bin/targets/ramips/mt7621"
+          OUT_DIR="${GITHUB_WORKSPACE}/firmware"
+
+          rm -rf "${OUT_DIR}"
+          mkdir -p "${OUT_DIR}"
+
+          find "${TARGET_DIR}" -maxdepth 1 -type f \
+            \( \
+              -name '*.bin' \
+              -o -name '*.img' \
+              -o -name '*.tar' \
+              -o -name '*.manifest' \
+              -o -name 'sha256sums' \
+              -o -name '*.json' \
+            \) \
+            -exec cp -av {} "${OUT_DIR}/" \;
+
+          cp -av .config "${OUT_DIR}/config.final"
+
+          {
+            echo "OpenWrt branch: ${REPO_BRANCH}"
+            echo "Target: Xiaomi Mi Router 4 / MT7621"
+            echo "Kernel: 4.14"
+            echo "PassWall feed: main"
+            echo "Build run: ${GITHUB_RUN_NUMBER}"
+          } > "${OUT_DIR}/BUILD_INFO.txt"
+
+          find "${OUT_DIR}" -maxdepth 1 -type f \
+            ! -name 'SHA256SUMS.txt' \
+            -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            > "${OUT_DIR}/SHA256SUMS.txt"
+
+          ls -lah "${OUT_DIR}"
+
+      - name: Upload firmware artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-19.07-mir4-passwall-${{ github.run_number }}
+          path: |
+            firmware/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-19.07-mir4-build-log-${{ github.run_number }}
+          path: |
+            build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: openwrt-19.07-mir4-${{ github.run_number }}
+          name: OpenWrt 19.07 MIR4 PassWall Build ${{ github.run_number }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            firmware/*
