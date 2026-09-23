@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 ROOT_DIR="$(pwd)"
@@ -11,66 +10,20 @@ PLATFORM_FILE="${ROOT_DIR}/target/linux/ramips/base-files/lib/upgrade/platform.s
 UBOOTENV_FILE="${ROOT_DIR}/package/boot/uboot-envtools/files/ramips"
 
 PASSWALL_MK="${ROOT_DIR}/package/feeds/passwall_luci/luci-app-passwall/Makefile"
-XRAY_MK="${ROOT_DIR}/package/feeds/passwall_packages/xray-core/Makefile"
+PASSWALL_PACKAGES="${ROOT_DIR}/package/feeds/passwall_packages"
+GOLANG_DIR="${ROOT_DIR}/feeds/packages/lang/golang"
 
 mkdir -p \
-    "$(dirname "${DTS_FILE}")" \
-    "$(dirname "${IMAGE_MK}")" \
-    "$(dirname "${NETWORK_FILE}")" \
-    "$(dirname "${PLATFORM_FILE}")" \
-    "$(dirname "${UBOOTENV_FILE}")" \
-    "${ROOT_DIR}/files/etc/uci-defaults"
+  "$(dirname "${DTS_FILE}")" \
+  "$(dirname "${IMAGE_MK}")" \
+  "$(dirname "${NETWORK_FILE}")" \
+  "$(dirname "${PLATFORM_FILE}")" \
+  "$(dirname "${UBOOTENV_FILE}")"
 
 # ============================================================================
-# 6. lyaml compatibility package
-# ============================================================================
-
-LYAML_MK="${ROOT_DIR}/package/lyaml/Makefile"
-mkdir -p "$(dirname "${LYAML_MK}")"
-
-cat > "${LYAML_MK}" <<'EOF'
-include $(TOPDIR)/rules.mk
-
-PKG_NAME:=lyaml
-PKG_VERSION:=0
-PKG_RELEASE:=1
-
-include $(INCLUDE_DIR)/package.mk
-
-define Package/lyaml
-  SECTION:=lang
-  CATEGORY:=Languages
-  SUBMENU:=Lua
-  TITLE:=lyaml compatibility package for OpenWrt 19.07
-  PKGARCH:=all
-endef
-
-define Package/lyaml/description
- Compatibility package for PassWall on OpenWrt 19.07.
-endef
-
-define Build/Prepare
-endef
-
-define Build/Configure
-endef
-
-define Build/Compile
-endef
-
-define Package/lyaml/install
-	$(INSTALL_DIR) $(1)/usr/share/lyaml
-	printf '%s\n' 'OpenWrt 19.07 compatibility stub' > $(1)/usr/share/lyaml/README
-endef
-
-$(eval $(call BuildPackage,lyaml))
-EOF
-
-
-# ============================================================================
-# 1. Xiaomi Mi Router 4 DTS
-#    基于 OpenWrt 19.07 的 MT7621 / MIR3G DTS 结构，
-#    按 Mi Router 4 官方硬件信息改为 128 MiB RAM + 128 MiB NAND。
+# 1. MIR4 DTS
+# Source: ioiotor/mir4-ss, with the source project's exact hardware layout:
+# 128 MiB RAM, NAND partitions, Wi-Fi EEPROMs and llllw switch portmap.
 # ============================================================================
 
 cat > "${DTS_FILE}" <<'EOF'
@@ -82,7 +35,7 @@ cat > "${DTS_FILE}" <<'EOF'
 #include <dt-bindings/input/input.h>
 
 / {
-	compatible = "xiaomi,mi-router-4", "mediatek,mt7621-soc";
+	compatible = "xiaomi,mir4", "mediatek,mt7621-soc";
 	model = "Xiaomi Mi Router 4";
 
 	aliases {
@@ -94,7 +47,7 @@ cat > "${DTS_FILE}" <<'EOF'
 
 	memory@0 {
 		device_type = "memory";
-		reg = <0x0 0x08000000>;
+		reg = <0x0 0x8000000>;
 	};
 
 	chosen {
@@ -105,17 +58,17 @@ cat > "${DTS_FILE}" <<'EOF'
 		compatible = "gpio-leds";
 
 		led_status_red: status_red {
-			label = "mir4:red:status";
+			label = "mri4:red:status";
 			gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
 		};
 
 		led_status_blue: status_blue {
-			label = "mir4:blue:status";
+			label = "mri4:blue:status";
 			gpios = <&gpio0 8 GPIO_ACTIVE_LOW>;
 		};
 
 		led_status_yellow: status_yellow {
-			label = "mir4:yellow:status";
+			label = "mri4:yellow:status";
 			gpios = <&gpio0 10 GPIO_ACTIVE_LOW>;
 		};
 	};
@@ -226,7 +179,7 @@ cat > "${DTS_FILE}" <<'EOF'
 
 &ethernet {
 	mtd-mac-address = <&factory 0xe000>;
-	mediatek,portmap = "lwlll";
+	mediatek,portmap = "llllw";
 };
 
 &pinctrl {
@@ -240,21 +193,26 @@ cat > "${DTS_FILE}" <<'EOF'
 EOF
 
 # ============================================================================
-# 2. 添加 MIR4 image profile
+# 2. MIR4 image profile
+# Source project uses separate kernel/rootfs images. Keep the same format but
+# use the full 128 MiB NAND UBI capacity instead of the source's 32 MiB limit.
 # ============================================================================
 
 python3 - "${IMAGE_MK}" <<'PY'
 from pathlib import Path
-import sys
+import re, sys
 
-path = Path(sys.argv[1])
-text = path.read_text()
+p = Path(sys.argv[1])
+s = p.read_text()
 
-if "define Device/mir4" not in text:
-    marker = "TARGET_DEVICES += xiaomi_mir3g\n"
+s = re.sub(r'define Device/(?:mir4|xiaomi_mir4)\n.*?endef\nTARGET_DEVICES \+= (?:mir4|xiaomi_mir4)\n',
+           '', s, flags=re.S)
 
-    block = r'''
-define Device/mir4
+anchor = 'TARGET_DEVICES += xiaomi_mir3g\n'
+if anchor not in s:
+    raise SystemExit("ERROR: xiaomi_mir3g image profile anchor not found")
+
+block = r'''define Device/xiaomi_mir4
   DTS := MIR4
   BLOCKSIZE := 128k
   PAGESIZE := 2048
@@ -267,274 +225,263 @@ define Device/mir4
   IMAGE/rootfs0.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
   DEVICE_TITLE := Xiaomi Mi Router 4
-  SUPPORTED_DEVICES += mir4
-  SUPPORTED_DEVICES += xiaomi,mi-router-4
-  DEVICE_PACKAGES := \
-	kmod-mt7603 kmod-mt76x2 \
-	wpad-basic uboot-envtools
+  DEVICE_PACKAGES := 	kmod-mt7603 kmod-mt76x2 wpad-basic uboot-envtools
 endef
-TARGET_DEVICES += mir4
+TARGET_DEVICES += xiaomi_mir4
 
 '''
-
-    if marker not in text:
-        raise SystemExit("ERROR: MIR3G target anchor not found")
-
-    text = text.replace(marker, marker + "\n" + block, 1)
-    path.write_text(text)
+s = s.replace(anchor, anchor + "\n" + block, 1)
+p.write_text(s)
 PY
 
 # ============================================================================
-# 3. 网络接口
+# 3. 02_network
+# Use the source project's exact legacy swconfig mapping:
+# physical LAN2 -> switch port 1, LAN1 -> port 2, WAN -> port 4, CPU -> 6t.
 # ============================================================================
 
 python3 - "${NETWORK_FILE}" <<'PY'
 from pathlib import Path
-import sys
+import re, sys
 
-path = Path(sys.argv[1])
-text = path.read_text()
+p = Path(sys.argv[1])
+s = p.read_text()
 
-# xiaomi,mi-router-4 -> legacy MT7621 switch mapping used by Mi Router 3G.
-# Physical LAN numbering follows Xiaomi's OEM wiring.
-if "\txiaomi,mi-router-4|" not in text:
-    needle = "\txiaomi,mir3g)\n"
-    replacement = (
-        "\txiaomi,mi-router-4|\\\n"
-        "\txiaomi,mir3g)\n"
-    )
+s = re.sub(r'\txiaomi,mir4\)\n\t\tucidef_add_switch "switch0" \\\n(?:\t\t\t".*?"\s*)+\n\t\t;;\n',
+           '', s)
 
-    if needle not in text:
-        raise SystemExit("ERROR: xiaomi,mir3g interface case not found")
+anchor = '\txiaomi,mir3p)\n\t\tucidef_add_switch "switch0" \\\n\t\t\t"1:lan:3" "2:lan:2" "3:lan:1" "4:wan" "6@eth0"\n\t\t;;\n'
+if anchor not in s:
+    raise SystemExit("ERROR: xiaomi,mir3p network anchor not found")
 
-    text = text.replace(needle, replacement, 1)
+block = '''\txiaomi,mir4)
+\t\tucidef_add_switch "switch0" \\\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
+\t\t;;
+'''
+s = s.replace(anchor, anchor + block, 1)
 
-# MIR4 factory MAC layout:
-# LAN / base MAC = factory 0xe000
-# WAN MAC        = factory 0xe006
-if "\txiaomi,mi-router-4)\n" not in text.split("ramips_setup_macs()", 1)[-1]:
-    needle = "\txiaomi,mir3g|\\\n\txiaomi,mir3p)\n"
-    replacement = (
-        "\txiaomi,mi-router-4)\n"
-        "\t\tlan_mac=$(mtd_get_mac_binary Factory 0xe000)\n"
-        "\t\twan_mac=$(mtd_get_mac_binary Factory 0xe006)\n"
-        "\t\t;;\n"
-        + needle
-    )
+# Match the source project's MAC policy exactly: LAN MAC from Factory+0xe006.
+s = re.sub(r'\txiaomi,mir3g\|\\\n\txiaomi,mir3p\|\\\n\txiaomi,mir4\)\n\t\tlan_mac=.*?\n\t\t;;\n',
+           '\txiaomi,mir3g|\\\n\txiaomi,mir3p|\\\n\txiaomi,mir4)\n\t\tlan_mac=$(mtd_get_mac_binary Factory 0xe006)\n\t\t;;\n',
+           s, count=1)
 
-    if needle not in text:
-        raise SystemExit("ERROR: MIR3G MAC case not found")
-
-    text = text.replace(needle, replacement, 1)
-
-path.write_text(text)
+p.write_text(s)
 PY
 
 # ============================================================================
-# 4. NAND 升级路径
+# 4. NAND upgrade path -- exact source project board case
 # ============================================================================
 
 python3 - "${PLATFORM_FILE}" <<'PY'
 from pathlib import Path
-import sys
+import re, sys
 
-path = Path(sys.argv[1])
-text = path.read_text()
+p = Path(sys.argv[1])
+s = p.read_text()
+s = re.sub(r'\txiaomi,mir3g\|\\\n\txiaomi,mir3p\|\\\n\txiaomi,mir4\)',
+           '\txiaomi,mir3g|\\\n\txiaomi,mir3p|\\\n\txiaomi,mir4)', s, count=1)
 
-if "\txiaomi,mi-router-4|" not in text:
-    needle = "\txiaomi,mir3g|\\\n\txiaomi,mir3p)\n"
-    replacement = (
-        "\txiaomi,mi-router-4|\\\n"
-        "\txiaomi,mir3g|\\\n"
-        "\txiaomi,mir3p)\n"
-    )
-
-    if needle not in text:
-        raise SystemExit("ERROR: MIR3G NAND upgrade case not found")
-
-    text = text.replace(needle, replacement, 1)
-
-path.write_text(text)
+if '\txiaomi,mir4)' not in s:
+    anchor = '\txiaomi,mir3p|\\\n\txiaomi,mir3g)'
+    if anchor in s:
+        s = s.replace(anchor, '\txiaomi,mir3p|\\\n\txiaomi,mir3g|\\\n\txiaomi,mir4)', 1)
+    else:
+        raise SystemExit("ERROR: NAND upgrade anchor not found")
+p.write_text(s)
 PY
 
 # ============================================================================
-# 5. U-Boot envtools
+# 5. U-Boot envtools -- exact source project configuration
 # ============================================================================
 
 python3 - "${UBOOTENV_FILE}" <<'PY'
 from pathlib import Path
-import sys
+import re, sys
 
-path = Path(sys.argv[1])
-text = path.read_text()
+p = Path(sys.argv[1])
+s = p.read_text()
 
-if "xiaomi,mi-router-4" not in text:
-    old = """xiaomi,mir3p|\\
-xiaomi,mir3g)"""
-    new = """xiaomi,mi-router-4|\\
-xiaomi,mir3p|\\
-xiaomi,mir3g)"""
-    if old not in text:
-        raise SystemExit("ERROR: xiaomi,mir3g uboot-envtools case not found")
-    text = text.replace(old, new, 1)
+if 'xiaomi,mir4)' not in s:
+    anchor = 'xiaomi,mir3p|\\\nxiaomi,mir3g)'
+    if anchor not in s:
+        raise SystemExit("ERROR: uboot-envtools Xiaomi anchor not found")
+    s = s.replace(anchor, 'xiaomi,mir3p|\\\nxiaomi,mir3g|\\\nxiaomi,mir4)', 1)
 
-path.write_text(text)
+p.write_text(s)
 PY
 
 # ============================================================================
-# 6. 当前 PassWall 主程序：保留最新版 UI，关闭大核心默认项
+# 6. Real lyaml package (PassWall depends on it)
 # ============================================================================
 
-python3 - "${PASSWALL_MK}" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-
-keys = [
-    "Iptables_Transparent_Proxy",
-    "Nftables_Transparent_Proxy",
-    "INCLUDE_Geoview",
-    "INCLUDE_Haproxy",
-    "INCLUDE_Hysteria",
-    "INCLUDE_NaiveProxy",
-    "INCLUDE_Shadowsocks_Rust_Client",
-    "INCLUDE_Shadowsocks_Rust_Server",
-    "INCLUDE_ShadowsocksR_Libev_Client",
-    "INCLUDE_ShadowsocksR_Libev_Server",
-    "INCLUDE_Shadow_TLS",
-    "INCLUDE_Simple_Obfs",
-    "INCLUDE_SingBox",
-    "INCLUDE_V2ray_Geodata",
-    "INCLUDE_V2ray_Plugin",
-    "INCLUDE_Xray",
-    "INCLUDE_Xray_Plugin",
-]
-
-for key in keys:
-    pattern = re.compile(
-        rf"(config PACKAGE_\$\(PKG_NAME\)_{re.escape(key)}.*?)(?=\nconfig PACKAGE_|\nendmenu)",
-        re.S,
-    )
-
-    m = pattern.search(text)
-    if not m:
-        continue
-
-    block = m.group(1)
-
-    if key == "Iptables_Transparent_Proxy":
-        continue
-
-    block2 = re.sub(
-        r"\n\tdefault\s+.*",
-        "\n\tdefault n",
-        block,
-        count=1,
-    )
-
-    text = text[:m.start(1)] + block2 + text[m.end(1):]
-
-path.write_text(text)
-PY
-
-# ============================================================================
-# 7. 删除导致 19.07 构建失败或没有必要的 PassWall 重型核心
-#
-# ShadowsocksR Libev 是此前 19.07 构建失败的直接来源。
-# 其它现代核心在 128M RAM 版本中不参与固件编译。
-# ============================================================================
-
-PASSWALL_PACKAGES_DIR="${ROOT_DIR}/package/feeds/passwall_packages"
-
-for pkg in \
-    shadowsocksr-libev \
-    shadowsocks-rust \
-    shadow-tls \
-    sing-box \
-    hysteria \
-    naiveproxy \
-    geoview \
-    haproxy \
-    v2ray-plugin \
-    xray-plugin \
-    simple-obfs
-do
-    rm -rf "${PASSWALL_PACKAGES_DIR}/${pkg}"
-done
-
-# ============================================================================
-# 8. Xray: use the current MIPS32 little-endian release binary.
-#
-# This avoids compiling modern Xray with the obsolete OpenWrt 19.07 Go
-# toolchain. The release asset is native for the router's mipsel_24kc CPU.
-# ============================================================================
-
-cat > "${XRAY_MK}" <<'EOF'
+LYAML_DIR="${ROOT_DIR}/package/lyaml"
+mkdir -p "${LYAML_DIR}"
+cat > "${LYAML_DIR}/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=xray-core
-PKG_VERSION:=26.9.9
+PKG_NAME:=lyaml
+PKG_VERSION:=6.2.7
 PKG_RELEASE:=2
-
-PKG_SOURCE:=Xray-linux-mips32le.zip
-PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core/releases/download/v$(PKG_VERSION)/
-PKG_HASH:=e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2
-
-PKG_MAINTAINER:=Openwrt-Passwall Organization
-PKG_LICENSE:=MPL-2.0
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/gvvaughan/lyaml/tar.gz/v$(PKG_VERSION)?
+PKG_HASH:=9bb489cefae48b150d66f6bab4141d8d5831fcb7465bfc52a9845fa01efc63b0
+PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
+PKG_BUILD_DEPENDS:=lua/host luarocks/host
+include $(INCLUDE_DIR)/package.mk
+
+define Package/lyaml
+  SUBMENU:=Lua
+  SECTION:=lang
+  CATEGORY:=Languages
+  TITLE:=Lua lib-yaml bindings
+  URL:=https://github.com/gvvaughan/lyaml
+  DEPENDS:=+lua +libyaml
+endef
+
+TARGET_CFLAGS += -I$(STAGING_DIR)/usr/include
+
+define Build/Compile
+	cd $(PKG_BUILD_DIR) && 	LUA_LIBDIR=$(STAGING_DIR)/usr/lib/lua 	LUA_PKGNAME=lua5.1 	CFLAGS="$(TARGET_CFLAGS) $(FPIC)" 	LDFLAGS="$(TARGET_LDFLAGS)" 	CC="$(TARGET_CC)" LD="$(TARGET_CC)" 	luarocks make --pack-binary-rock lyaml-$(PKG_VERSION)-1.rockspec 	LUA_LIBDIR=$(STAGING_DIR)/usr/lib/lua 	YAML_DIR=$(STAGING_DIR)/usr 	LUA_INCDIR=$(STAGING_DIR)/usr/include 	LUA_PKGNAME=lua5.1 	CFLAGS="$(TARGET_CFLAGS) $(FPIC)" 	LDFLAGS="$(TARGET_LDFLAGS)" 	CC="$(TARGET_CC)" LD="$(TARGET_CC)"
+endef
+
+define Package/lyaml/install
+	$(INSTALL_DIR) $(1)/usr/lib/lua/lyaml
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/linux/yaml.so $(1)/usr/lib/lua/
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/lib/lyaml/*.lua $(1)/usr/lib/lua/lyaml/
+endef
+
+$(eval $(call BuildPackage,lyaml))
+EOF
+
+# ============================================================================
+# 7. Replace broken current SSR recipe with a working git-source recipe.
+# Current PassWall's main branch declares SSR 2.5.6 but its Makefile has no
+# source stanza, which caused the previous "No makefile found" failure.
+# ============================================================================
+
+SSR_DIR="${PASSWALL_PACKAGES}/shadowsocksr-libev"
+rm -rf "${SSR_DIR}"
+mkdir -p "${SSR_DIR}"
+
+cat > "${SSR_DIR}/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=shadowsocksr-libev
+PKG_VERSION:=2.5.6
+PKG_RELEASE:=14
+
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/shadowsocksrr/shadowsocksr-libev.git
+PKG_SOURCE_VERSION:=4799b312b8244ec067b8ae9ba4b85c877858976c
+
+PKG_LICENSE:=GPL-3.0
+PKG_LICENSE_FILES:=LICENSE
+PKG_FIXUP:=autoreconf
+PKG_USE_MIPS16:=0
+PKG_BUILD_FLAGS:=no-mips16 gc-sections lto
+PKG_BUILD_PARALLEL:=1
+PKG_INSTALL:=1
 
 include $(INCLUDE_DIR)/package.mk
 
-PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
+define Package/shadowsocksr-libev/Default
+  define Package/shadowsocksr-libev-ssr-$(1)
+    SECTION:=net
+    CATEGORY:=Network
+    SUBMENU:=Web Servers/Proxies
+    TITLE:=shadowsocksr-libev ssr-$(1)
+    URL:=https://github.com/shadowsocksrr/shadowsocksr-libev
+    DEPENDS:=+libev +libsodium +libopenssl +libpthread +libpcre2 +libudns +zlib
+  endef
 
-define Build/Prepare
-	rm -rf $(PKG_BUILD_DIR)
-	mkdir -p $(PKG_BUILD_DIR)
-	unzip -q $(DL_DIR)/$(PKG_SOURCE) -d $(PKG_BUILD_DIR)
-	test -x $(PKG_BUILD_DIR)/xray
+  define Package/shadowsocksr-libev-ssr-$(1)/install
+	$$(INSTALL_DIR) $$(1)/usr/bin
+	$$(INSTALL_BIN) $$(PKG_INSTALL_DIR)/usr/bin/ss-$(1) $$(1)/usr/bin/ssr-$(1)
+  endef
 endef
 
-define Build/Compile
+SHADOWSOCKSR_COMPONENTS:=check local nat redir server
+define shadowsocksr-libev/templates
+  $(foreach component,$(SHADOWSOCKSR_COMPONENTS),$(call Package/shadowsocksr-libev/Default,$(component)))
 endef
+$(eval $(call shadowsocksr-libev/templates))
+
+CONFIGURE_ARGS += 	--disable-documentation 	--disable-ssp 	--disable-assert 	--enable-system-shared-lib
+
+TARGET_LDFLAGS += -Wl,--as-needed
+
+$(foreach component,$(SHADOWSOCKSR_COMPONENTS),   $(eval $(call BuildPackage,shadowsocksr-libev-ssr-$(component))) )
+EOF
+
+# ============================================================================
+# 8. Xray 26.6.1 + Go 1.26 feed
+# This keeps Xray, sing-box and hysteria on one modern Go toolchain while
+# avoiding Xray 26.9.x's Go 1.27 requirement on the legacy 19.07 buildroot.
+# ============================================================================
+
+rm -rf "${GOLANG_DIR}"
+git clone --depth 1 --single-branch --branch 26.x   https://github.com/sbwml/packages_lang_golang.git "${GOLANG_DIR}"
+
+XRAY_DIR="${PASSWALL_PACKAGES}/xray-core"
+rm -rf "${XRAY_DIR}"
+mkdir -p "${XRAY_DIR}"
+
+cat > "${XRAY_DIR}/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=xray-core
+PKG_VERSION:=26.6.1
+PKG_RELEASE:=1
+
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/XTLS/Xray-core/tar.gz/v$(PKG_VERSION)?
+PKG_HASH:=efe463f8e35c4e6e93a6e8d51b27bae0cd4904b9820740c3af01733efb566fee
+PKG_BUILD_DIR:=$(BUILD_DIR)/Xray-core-$(PKG_VERSION)
+
+PKG_LICENSE:=MPL-2.0
+PKG_LICENSE_FILES:=LICENSE
+PKG_BUILD_DEPENDS:=golang/host
+PKG_BUILD_PARALLEL:=1
+PKG_USE_MIPS16:=0
+PKG_BUILD_FLAGS:=no-mips16
+
+GO_PKG:=github.com/xtls/xray-core
+GO_PKG_BUILD_PKG:=$(GO_PKG)/main
+GO_PKG_LDFLAGS:=-s -w
+GO_PKG_LDFLAGS_X:= 	$(GO_PKG)/core.build=OpenWrt 	$(GO_PKG)/core.version=$(PKG_VERSION)
+
+include $(INCLUDE_DIR)/package.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 define Package/xray-core
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Xray-core
   URL:=https://xtls.github.io
-  DEPENDS:=+ca-bundle
-endef
-
-define Package/xray-core/description
- Xray-core MIPS32 little-endian release binary.
-endef
-
-define Package/xray-core/conffiles
-/etc/xray/
-/etc/config/xray
+  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle
 endef
 
 define Package/xray-core/install
+	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/xray $(1)/usr/bin/xray
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/main $(1)/usr/bin/xray
 endef
 
 $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 9. No modern Go feed is required.
-#
-# Xray is installed from the current MIPS32LE release binary above. Keeping
-# OpenWrt 19.07's original Go feed avoids introducing a second, incompatible
-# Go toolchain into the legacy buildroot.
+# 9. PassWall cores: keep all requested cores enabled.
+# Do not delete sing-box/hysteria/SSR from the feed.
 # ============================================================================
 
-# 10. 关闭无用日志 / 大型服务 / 第二套代理核心
+test -f "${PASSWALL_MK}"
+test -f "${PASSWALL_PACKAGES}/sing-box/Makefile"
+test -f "${PASSWALL_PACKAGES}/hysteria/Makefile"
+
+# ============================================================================
+# 10. Runtime defaults: IPv6 enabled + 128 MiB ZRAM
 # ============================================================================
 
 mkdir -p "${ROOT_DIR}/files/etc/uci-defaults"
@@ -542,101 +489,34 @@ mkdir -p "${ROOT_DIR}/files/etc/uci-defaults"
 cat > "${ROOT_DIR}/files/etc/uci-defaults/99-mir4-tuning" <<'EOF'
 #!/bin/sh
 
-# ============================================================================
-# Xiaomi Mi Router 4 runtime tuning
-# ============================================================================
+# Keep IPv6 enabled. The firmware is built with kernel IPv6, ip6tables,
+# odhcp6c/odhcpd and luci-proto-ipv6.
 
-# ---------------------------------------------------------------------------
-# LAN
-# ---------------------------------------------------------------------------
+uci -q set network.lan.ip6assign='60'
+uci -q set dhcp.lan.ra='server'
+uci -q set dhcp.lan.dhcpv6='server'
+uci -q set dhcp.lan.ndp='hybrid'
 
-uci -q set network.lan.ipaddr='192.168.1.1'
-uci -q set network.lan.netmask='255.255.255.0'
+# Software flow offloading is safe with PassWall's iptables/TProxy path.
+uci -q set firewall.@defaults[0].flow_offloading='1'
+uci -q set firewall.@defaults[0].flow_offloading_hw='0'
 
-# Disable IPv6 on LAN/WAN.
-uci -q delete network.wan6
-uci -q set network.lan.ip6assign='0'
-
-uci -q set dhcp.lan.ra='disabled'
-uci -q set dhcp.lan.dhcpv6='disabled'
-uci -q set dhcp.lan.ndp='disabled'
-
-# ---------------------------------------------------------------------------
-# DNS cache
-# ---------------------------------------------------------------------------
+# OpenWrt 19.07 zram-swap reads these exact UCI options.
+uci -q set system.@system[0].zram_size_mb='128'
+uci -q set system.@system[0].zram_comp_algo='lz4'
+uci -q set system.@system[0].zram_comp_streams='4'
+uci -q set system.@system[0].log_size='16'
 
 uci -q set dhcp.@dnsmasq[0].cachesize='512'
 uci -q set dhcp.@dnsmasq[0].domainneeded='1'
 uci -q set dhcp.@dnsmasq[0].boguspriv='1'
-
-# ---------------------------------------------------------------------------
-# Software flow offloading only.
-#
-# Hardware NAT offload is deliberately disabled because policy routing /
-# TPROXY traffic handled by PassWall must continue through netfilter.
-# ---------------------------------------------------------------------------
-
-uci -q set firewall.@defaults[0].flow_offloading='1'
-uci -q set firewall.@defaults[0].flow_offloading_hw='0'
-
-# ---------------------------------------------------------------------------
-# 64 MiB ZRAM
-# ---------------------------------------------------------------------------
-
-uci -q set system.@system[0].zram_size_mb='64'
-uci -q set system.@system[0].zram_comp_algo='lz4'
-uci -q set system.@system[0].zram_comp_streams='4'
-
-# Keep normal log buffer small.
-uci -q set system.@system[0].log_size='16'
-
-# ---------------------------------------------------------------------------
-# Conntrack / TCP tuning for 128 MiB RAM.
-#
-# 32768 is deliberately used instead of extremely large conntrack tables.
-# ---------------------------------------------------------------------------
-
-SYSCTL_MARK="# MIR4-PASSWALL-128M"
-
-if ! grep -q "${SYSCTL_MARK}" /etc/sysctl.conf 2>/dev/null; then
-	cat >> /etc/sysctl.conf <<'SYSCTL'
-# MIR4-PASSWALL-128M
-
-vm.swappiness=10
-vm.vfs_cache_pressure=200
-vm.dirty_background_ratio=2
-vm.dirty_ratio=5
-
-net.core.somaxconn=512
-net.core.netdev_max_backlog=2048
-
-net.ipv4.tcp_max_syn_backlog=2048
-net.ipv4.tcp_fin_timeout=15
-net.ipv4.tcp_tw_reuse=1
-net.ipv4.ip_local_port_range=10240 65535
-net.ipv4.tcp_syncookies=1
-
-net.netfilter.nf_conntrack_max=32768
-net.netfilter.nf_conntrack_acct=0
-net.netfilter.nf_conntrack_timestamp=0
-net.netfilter.nf_conntrack_tcp_timeout_established=1800
-net.netfilter.nf_conntrack_tcp_timeout_time_wait=30
-net.netfilter.nf_conntrack_udp_timeout=30
-net.netfilter.nf_conntrack_udp_timeout_stream=120
-SYSCTL
-fi
-
-sysctl -p /etc/sysctl.conf >/dev/null 2>&1 || true
 
 uci -q commit network
 uci -q commit dhcp
 uci -q commit firewall
 uci -q commit system
 
-# Enable ZRAM for subsequent boots.
-if [ -x /etc/init.d/zram ]; then
-	/etc/init.d/zram enable >/dev/null 2>&1 || true
-fi
+[ -x /etc/init.d/zram ] && /etc/init.d/zram enable >/dev/null 2>&1 || true
 
 exit 0
 EOF
@@ -644,38 +524,31 @@ EOF
 chmod 0755 "${ROOT_DIR}/files/etc/uci-defaults/99-mir4-tuning"
 
 # ============================================================================
-# 11. 清理不必要的 source-side 文件，确保没有旧的 MIR4 注入冲突
+# 11. Build-time sanity checks
 # ============================================================================
 
-rm -f "${ROOT_DIR}/files/MIR4.dts" 2>/dev/null || true
-
-# ============================================================================
-# 12. 基本完整性检查
-# ============================================================================
-
-test -s "${DTS_FILE}"
-grep -q 'compatible = "xiaomi,mi-router-4"' "${DTS_FILE}"
-grep -q 'reg = <0x0 0x08000000>' "${DTS_FILE}"
-grep -q 'partition@a00000' "${DTS_FILE}"
-
-grep -q 'define Device/mir4' "${IMAGE_MK}"
-grep -q 'TARGET_DEVICES += mir4' "${IMAGE_MK}"
-grep -q 'xiaomi,mi-router-4' "${NETWORK_FILE}"
-grep -q 'xiaomi,mi-router-4' "${PLATFORM_FILE}"
-grep -q 'xiaomi,mi-router-4' "${UBOOTENV_FILE}"
-
-grep -q 'PKG_VERSION:=26.6.1' "${XRAY_MK}"
-grep -q 'PKG_HASH:=efe463f8e35c4e6e93a6e8d51b27bae0cd4904b9820740c3af01733efb566fee' "${XRAY_MK}"
+grep -q 'compatible = "xiaomi,mir4"' "${DTS_FILE}"
+grep -q 'mediatek,portmap = "llllw"' "${DTS_FILE}"
+grep -q 'define Device/xiaomi_mir4' "${IMAGE_MK}"
+grep -q 'IMAGE_SIZE := 124416k' "${IMAGE_MK}"
+grep -q 'xiaomi,mir4)' "${NETWORK_FILE}"
+grep -q '"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"' "${NETWORK_FILE}"
+grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
+grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
+grep -q 'PKG_VERSION:=2.5.6' "${SSR_DIR}/Makefile"
+grep -q '4799b312b8244ec067b8ae9ba4b85c877858976c' "${SSR_DIR}/Makefile"
+grep -q 'PKG_VERSION:=26.6.1' "${XRAY_DIR}/Makefile"
 
 echo "============================================================"
-echo "diy-part2.sh completed"
-echo "Target      : Xiaomi Mi Router 4 / MT7621"
-echo "RAM         : 128 MiB"
-echo "Kernel      : OpenWrt 19.07 / Linux 4.14"
-echo "PassWall    : current main"
-echo "Proxy core  : Xray 26.6.1"
-echo "Go toolchain : not required for Xray (release binary)"
-echo "ZRAM        : 64 MiB / lz4 / 4 streams"
-echo "Conntrack   : 32768"
-echo "Flow offload: software only"
+echo "MIR4 / OpenWrt 19.07 patch completed"
+echo "DTS         : ioiotor/mir4-ss hardware layout"
+echo "Switch      : port1 LAN2 / port2 LAN1 / port4 WAN / port6 CPU"
+echo "NAND image  : 124416 KiB"
+echo "IPv6        : enabled"
+echo "ZRAM        : 128 MiB / lz4 / 4 streams"
+echo "Xray        : 26.6.1"
+echo "Sing-box    : PassWall feed current main"
+echo "Hysteria    : PassWall feed current main"
+echo "SSR         : 2.5.6 git master source, fixed recipe"
+echo "Go          : sbwml/packages_lang_golang 26.x"
 echo "============================================================"
