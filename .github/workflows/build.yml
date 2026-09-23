@@ -143,7 +143,7 @@ jobs:
           python --version
           python2 --version
 
-          grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_mir4=y$' .config
+          grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y$' .config
