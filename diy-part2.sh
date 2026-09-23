@@ -194,8 +194,7 @@ EOF
 
 # ============================================================================
 # 2. MIR4 image profile
-# Source project uses separate kernel/rootfs images. Keep the same format but
-# use the full 128 MiB NAND UBI capacity instead of the source's 32 MiB limit.
+# Source project uses the exact separate kernel/rootfs image layout.
 # ============================================================================
 
 python3 - "${IMAGE_MK}" <<'PY'
@@ -217,7 +216,7 @@ block = r'''define Device/xiaomi_mir4
   BLOCKSIZE := 128k
   PAGESIZE := 2048
   KERNEL_SIZE := 4096k
-  IMAGE_SIZE := 124416k
+  IMAGE_SIZE := 32768k
   UBINIZE_OPTS := -E 5
   BOARD_NAME := mir4
   IMAGES += kernel1.bin rootfs0.bin
