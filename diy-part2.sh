@@ -224,7 +224,8 @@ block = r'''define Device/xiaomi_mir4
   IMAGE/rootfs0.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
   DEVICE_TITLE := Xiaomi Mi Router 4
-  DEVICE_PACKAGES := 	kmod-mt7603 kmod-mt76x2 wpad-basic uboot-envtools
+  DEVICE_PACKAGES := \\
+\tkmod-mt7603 kmod-mt76x2 wpad-basic uboot-envtools
 endef
 TARGET_DEVICES += xiaomi_mir4
 
@@ -254,7 +255,8 @@ if anchor not in s:
     raise SystemExit("ERROR: xiaomi,mir3p network anchor not found")
 
 block = '''\txiaomi,mir4)
-\t\tucidef_add_switch "switch0" \\\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
+\t\tucidef_add_switch "switch0" \\\
+\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
 \t\t;;
 '''
 s = s.replace(anchor, anchor + block, 1)
