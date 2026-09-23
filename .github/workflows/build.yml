@@ -147,20 +147,39 @@ jobs:
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=y$' .config
           grep -q '^CONFIG_PACKAGE_xray-core=y$' .config
+          grep -q '^CONFIG_PACKAGE_sing-box=y$' .config
+          grep -q '^CONFIG_PACKAGE_hysteria=y$' .config
+          grep -q '^CONFIG_PACKAGE_shadowsocksr-libev-ssr-local=y$' .config
+          grep -q '^CONFIG_PACKAGE_shadowsocksr-libev-ssr-redir=y$' .config
+          grep -q '^CONFIG_PACKAGE_shadowsocksr-libev-ssr-server=y$' .config
           grep -q '^CONFIG_PACKAGE_kmod-mt7603=y$' .config
           grep -q '^CONFIG_PACKAGE_kmod-mt76x2=y$' .config
           grep -q '^CONFIG_PACKAGE_zram-swap=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-zram=y$' .config
           grep -q '^CONFIG_PACKAGE_lyaml=y$' .config
-          grep -q '^CONFIG_IPV6=y
 
-          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=y          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y$' .config
+          grep -q '^CONFIG_IPV6=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-ip6tables=y$' .config
+          grep -q '^CONFIG_PACKAGE_ip6tables=y$' .config
+          grep -q '^CONFIG_PACKAGE_odhcp6c=y$' .config
+          grep -q '^CONFIG_PACKAGE_odhcpd-ipv6only=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-proto-ipv6=y$' .config
+
+          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y$' .config
           ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client=y$' .config
           ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadow_TLS=y$' .config
-          ! grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs=y$' .config
 
           test -f package/feeds/passwall_packages/xray-core/Makefile
-          grep -q '^PKG_VERSION:=26.6.1
+          grep -q '^PKG_VERSION:=26.6.1$' package/feeds/passwall_packages/xray-core/Makefile
+          test -f package/feeds/passwall_packages/sing-box/Makefile
+          test -f package/feeds/passwall_packages/hysteria/Makefile
+          test -f package/feeds/passwall_packages/shadowsocksr-libev/Makefile
+          grep -q '4799b312b8244ec067b8ae9ba4b85c877858976c' package/feeds/passwall_packages/shadowsocksr-libev/Makefile
 
           echo "===== TARGET ====="
           grep '^CONFIG_TARGET_' .config | grep -E 'ramips|mt7621|mir4' || true
@@ -168,8 +187,11 @@ jobs:
           echo "===== PASSWALL ====="
           grep '^CONFIG_PACKAGE_luci-app-passwall' .config || true
 
-          echo "===== XRAY ====="
-          grep '^CONFIG_PACKAGE_xray-core' .config || true
+          echo "===== CORES ====="
+          grep -E '^CONFIG_PACKAGE_(xray-core|sing-box|hysteria|shadowsocksr-libev)' .config || true
+
+          echo "===== IPV6 ====="
+          grep -E '^CONFIG_(KERNEL_IPV6|IPV6)|^CONFIG_PACKAGE_(kmod-ip6tables|ip6tables|odhcp6c|odhcpd-ipv6only|luci-proto-ipv6)' .config || true
 
           echo "===== MEMORY ====="
           grep -E 'ZRAM|SWAP' .config || true
