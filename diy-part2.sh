@@ -527,19 +527,13 @@ $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 9. 使用 Go 1.26.x feed
+# 9. No modern Go feed is required.
+#
+# Xray is installed from the current MIPS32LE release binary above. Keeping
+# OpenWrt 19.07's original Go feed avoids introducing a second, incompatible
+# Go toolchain into the legacy buildroot.
 # ============================================================================
 
-rm -rf "${ROOT_DIR}/feeds/packages/lang/golang"
-
-git clone \
-    --depth 1 \
-    --single-branch \
-    --branch 26.x \
-    https://github.com/sbwml/packages_lang_golang \
-    "${ROOT_DIR}/feeds/packages/lang/golang"
-
-# ============================================================================
 # 10. 关闭无用日志 / 大型服务 / 第二套代理核心
 # ============================================================================
 
