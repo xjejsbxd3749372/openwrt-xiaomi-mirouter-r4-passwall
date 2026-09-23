@@ -263,8 +263,10 @@ p.write_text(s)
 PY
 
 # ============================================================================
+# ============================================================================
 # 4. NAND upgrade path
-# Real OpenWrt 19.07 board list is xiaomi,mir3g then xiaomi,mir3p.
+# OpenWrt 19.07 uses a single case block; add MIR4 to the existing Xiaomi
+# NAND boards without assuming a particular board ordering.
 # ============================================================================
 python3 - "${PLATFORM_FILE}" <<'PY'
 from pathlib import Path
@@ -273,16 +275,17 @@ import re, sys
 p = Path(sys.argv[1])
 s = p.read_text()
 
-pattern = r'(\txiaomi,mir3g\|\\\n\txiaomi,mir3p\))'
-if re.search(pattern, s):
-    s = re.sub(pattern, r'\1|\\\n\txiaomi,mir4)', s, count=1)
-else:
-    # fallback: add mir4 after mir3p
-    pattern2 = r'(\txiaomi,mir3p\))'
-    if re.search(pattern2, s):
-        s = re.sub(pattern2, r'\1|\\\n\txiaomi,mir4)', s, count=1)
+if 'xiaomi,mir4)' not in s:
+    patterns = [
+        r'(xiaomi,mir3p\|\\\n\txiaomi,mir3g\))',
+        r'(xiaomi,mir3g\|\\\n\txiaomi,mir3p\))',
+    ]
+    for pattern in patterns:
+        if re.search(pattern, s):
+            s = re.sub(pattern, lambda m: m.group(1)[:-1] + '|\\\n\txiaomi,mir4)', s, count=1)
+            break
     else:
-        raise SystemExit('ERROR: NAND upgrade anchor not found')
+        raise SystemExit('ERROR: OpenWrt 19.07 Xiaomi NAND case not found')
 
 p.write_text(s)
 PY
@@ -298,20 +301,23 @@ p = Path(sys.argv[1])
 s = p.read_text()
 
 if 'xiaomi,mir4)' not in s:
-    pattern = r'(xiaomi,mir3g\|\\\nxiaomi,mir3p\))'
-    if re.search(pattern, s):
-        s = re.sub(pattern, r'\1|\\\nxiaomi,mir4)', s, count=1)
+    patterns = [
+        r'(xiaomi,mir3p\|\\\nxiaomi,mir3g\))',
+        r'(xiaomi,mir3g\|\\\nxiaomi,mir3p\))',
+    ]
+    for pattern in patterns:
+        if re.search(pattern, s):
+            s = re.sub(pattern, lambda m: m.group(1)[:-1] + '|\\\nxiaomi,mir4)', s, count=1)
+            break
     else:
-        pattern2 = r'(xiaomi,mir3p\))'
-        if re.search(pattern2, s):
-            s = re.sub(pattern2, r'\1|\\\nxiaomi,mir4)', s, count=1)
-        else:
-            raise SystemExit('ERROR: uboot-envtools Xiaomi anchor not found')
+        raise SystemExit('ERROR: uboot-envtools Xiaomi case not found')
 
 p.write_text(s)
 PY
 
-# ============================================================================
+grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
+grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
+
 # 6. Real lyaml package
 # ============================================================================
 LYAML_DIR="${ROOT_DIR}/package/lyaml"
