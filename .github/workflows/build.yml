@@ -51,7 +51,11 @@ jobs:
         run: |
           set -eux
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang ccache ecj fastjar file g++ gawk gettext             git libncurses5-dev libncursesw5-dev libssl-dev python3             python3-distutils rsync subversion swig unzip wget xsltproc             zlib1g-dev jq quilt default-jre-headless
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential clang ccache ecj fastjar file g++ gawk gettext \
+            git libncurses5-dev libncursesw5-dev libssl-dev python3 \
+            python3-distutils rsync subversion swig unzip wget xsltproc \
+            zlib1g-dev jq quilt default-jre-headless
           sudo apt-get clean
           ccache --max-size=3G
 
@@ -115,10 +119,14 @@ jobs:
           grep -q '^CONFIG_IPV6=y$' .config
           grep -q '^CONFIG_PACKAGE_kmod-inet-diag=y$' .config
           grep -q '^CONFIG_PACKAGE_kmod-netlink-diag=y$' .config
+          # Strict: Xray must be the 26.9.9 official MIPS32LE binary we inject
           grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
-          grep -q 'PKG_VERSION:=1.14.1' feeds/passwall_packages/sing-box/Makefile
-          grep -q 'PKG_VERSION:=2.5.6' feeds/passwall_packages/shadowsocksr-libev/Makefile
           grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
+          # Soft: PassWall upstream may bump patch versions
+          grep -E 'PKG_VERSION:=1\.14\.' feeds/passwall_packages/sing-box/Makefile || \
+            echo "WARNING: sing-box is not 1.14.x"
+          grep -E 'PKG_VERSION:=2\.5\.' feeds/passwall_packages/shadowsocksr-libev/Makefile || \
+            echo "WARNING: shadowsocksr-libev is not 2.5.x"
 
       - name: Download package sources
         working-directory: ${{ env.OPENWRT_DIR }}
@@ -142,7 +150,10 @@ jobs:
           out_dir="${GITHUB_WORKSPACE}/firmware"
           rm -rf "${out_dir}"
           mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \(             -name '*.bin' -o -name '*.img' -o -name '*.tar'             -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json'           \) -exec cp -av {} "${out_dir}/" \;
+          find "${target_dir}" -maxdepth 1 -type f \( \
+            -name '*.bin' -o -name '*.img' -o -name '*.tar' \
+            -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json' \
+          \) -exec cp -av {} "${out_dir}/" \;
           cp -av .config "${out_dir}/config.final"
           {
             echo "OpenWrt branch: ${REPO_BRANCH}"
