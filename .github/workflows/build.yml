@@ -1,4 +1,4 @@
-name: Build OpenWrt 19.07 - Xiaomi Mi Router 4 - helloworld SSR Plus+
+name: Build OpenWrt 19.07 MIR4 helloworld SSR Plus+
 
 on:
   workflow_dispatch:
@@ -17,109 +17,47 @@ env:
   OPENWRT_DIR: openwrt
   BUILD_JOBS: 4
   HELLOWORLD_REPO: https://github.com/fw876/helloworld.git
-  GOLANG_REPO: https://github.com/openwrt/packages.git
-  GOLANG_BRANCH: openwrt-23.05
+  GOLANG_REPO: https://github.com/sbwml/packages_lang_golang.git
+  GOLANG_BRANCH: 27.x
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
-
     steps:
-      - name: Checkout build scripts
-        uses: actions/checkout@v4
-
-      - name: Free disk space
-        shell: bash
-        run: |
-          set -eux
-          sudo rm -rf /usr/local/lib/android/sdk /usr/share/dotnet /opt/ghc || true
-          sudo apt-get clean
-          df -h
-
-      - name: Create build swap
-        shell: bash
-        run: |
-          set -eux
-          sudo swapoff -a || true
-          sudo rm -f /swapfile
-          sudo fallocate -l 6G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
+      - uses: actions/checkout@v4
 
       - name: Install build dependencies
-        shell: bash
         run: |
           set -eux
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang llvm ccache ecj fastjar file g++ gawk gettext             git libncurses5-dev libncursesw5-dev libssl-dev python3             python3-distutils rsync subversion swig unzip wget xsltproc             zlib1g-dev jq quilt default-jre-headless upx-ucl binutils
-          sudo apt-get clean
-          clang --version
-          ccache --max-size=3G
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang llvm ccache file g++ gawk gettext git             libncurses5-dev libncursesw5-dev libssl-dev python3             rsync subversion swig unzip wget xsltproc zlib1g-dev jq             quilt default-jre-headless binutils
 
-      - name: Install Python 2.7
-        shell: bash
+      - name: Create swap
         run: |
           set -eux
-          cd /tmp
-          wget -q https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
-          tar xf Python-2.7.18.tgz
-          cd Python-2.7.18
-          ./configure --prefix=/opt/python2 --enable-unicode=ucs4 --disable-shared
-          make -j2
-          sudo make install
-          sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2.7
-          sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2
-          python2 --version
-
-      - name: Cache downloads and ccache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.ccache
-            openwrt/dl
-          key: openwrt-19.07-mir4-ssrplus-${{ runner.os }}-${{ hashFiles('.config') }}
-          restore-keys: |
-            openwrt-19.07-mir4-ssrplus-${{ runner.os }}-
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
 
       - name: Clone OpenWrt 19.07
-        shell: bash
         run: |
-          set -eux
-          rm -rf "${OPENWRT_DIR}"
           git clone --depth 1 --single-branch --branch "${REPO_BRANCH}"             "${REPO_URL}" "${OPENWRT_DIR}"
 
-      - name: Update base OpenWrt feeds
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -eux
-          ./scripts/feeds update -a
+      - name: Update base feeds
+        working-directory: openwrt
+        run: ./scripts/feeds update -a
 
-      - name: Install helloworld and upgrade Golang
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
+      - name: Install helloworld and real host dependencies
+        working-directory: openwrt
         run: |
           set -eux
           bash "${GITHUB_WORKSPACE}/diy-part1.sh"
+          bash "${GITHUB_WORKSPACE}/diy-part2.sh"
 
-      - name: Install helloworld packages
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -eux
-          ./scripts/feeds install -a -f
-          ./scripts/feeds install -a -f -p packages
-          # Method 1 keeps helloworld directly under package/helloworld.
-          # Force-installing all helloworld packages is unnecessary because
-          # .config selects only the SSR Plus+ stack.
-          make defconfig
-
-      - name: Apply MIR4/SSR Plus configuration
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
+      - name: Defconfig and dependency validation
+        working-directory: openwrt
         run: |
           set -eux
           cp "${GITHUB_WORKSPACE}/.config" .config
@@ -131,57 +69,20 @@ jobs:
           grep -q '^CONFIG_PACKAGE_xray-core=y$' .config
           grep -q '^CONFIG_PACKAGE_shadowsocksr-libev-ssr-local=y$' .config
 
-          test -f "${GITHUB_WORKSPACE}/openwrt/package/helloworld/luci-app-ssr-plus/Makefile"
-          test -f "${GITHUB_WORKSPACE}/openwrt/package/helloworld/xray-core/Makefile"
-          test -f "${GITHUB_WORKSPACE}/openwrt/feeds/packages/lang/golang/golang-package.mk"
+          test -f package/helloworld/luci-app-ssr-plus/Makefile
+          test -f package/helloworld/xray-core/Makefile
+          test -f package/feeds/golang27/lang/golang/golang-package.mk
+          test -f package/feeds/compat23/lang/rust/Makefile
+          test -f package/feeds/modern/lang/lua/lyaml/Makefile
+          test -f package/feeds/kcptun/kcptun/Makefile
 
-          echo "helloworld + Golang validation passed."
+          echo "MIR4 + helloworld + real Golang 1.27 + Rust host validation passed."
 
-      - name: Download package sources
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: make download -j8 V=s
-
-      - name: Compile firmware
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
+      - name: Build
+        working-directory: openwrt
         run: |
           set -o pipefail
           make -j"${BUILD_JOBS}" V=s 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
-
-      - name: Collect firmware
-        if: success()
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -eux
-          target_dir=bin/targets/ramips/mt7621
-          out_dir="${GITHUB_WORKSPACE}/firmware"
-          rm -rf "${out_dir}"
-          mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \(             -name '*.bin' -o -name '*.img' -o -name '*.tar'             -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json'           \) -exec cp -av {} "${out_dir}/" \;
-          cp -av .config "${out_dir}/config.final"
-          {
-            echo "OpenWrt branch: ${REPO_BRANCH}"
-            echo "Target: Xiaomi Mi Router 4 / MT7621A"
-            echo "Proxy stack: fw876/helloworld luci-app-ssr-plus"
-            echo "Golang source: ${GOLANG_REPO} / ${GOLANG_BRANCH}"
-            echo "PassWall: not included"
-            echo "sing-box: not included"
-            echo "Rust/shadowsocks-rust: not included"
-            echo "Build run: ${GITHUB_RUN_NUMBER}"
-          } > "${out_dir}/BUILD_INFO.txt"
-          (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
-          ls -lah "${out_dir}"
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-ssrplus-${{ github.run_number }}
-          path: firmware/*
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Upload build log
         if: always()
@@ -192,15 +93,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Publish GitHub Release
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-19.07-mir4-ssrplus-${{ github.run_number }}
+          path: openwrt/bin/targets/ramips/mt7621/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Release
         if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-ssrplus-{0}', github.run_number) }}
-          name: OpenWrt 19.07 MIR4 SSR Plus+ Build ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-          draft: false
-          prerelease: false
+          name: OpenWrt 19.07 MIR4 SSR Plus+ ${{ github.run_number }}
           generate_release_notes: true
-          files: |
-            firmware/*
-            .config
+          files: openwrt/bin/targets/ramips/mt7621/*
