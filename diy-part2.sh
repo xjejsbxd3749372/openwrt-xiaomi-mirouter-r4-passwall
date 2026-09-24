@@ -137,7 +137,7 @@ if "xiaomi,mir4)" not in s:
 p.write_text(s)
 PY
 
-python3 "${UPGRADE_FILE}" "${UBOOTENV_FILE}" <<'PY'
+python3 - "${UPGRADE_FILE}" "${UBOOTENV_FILE}" <<'PY'
 from pathlib import Path
 import sys
 upgrade, env = map(Path, sys.argv[1:])
