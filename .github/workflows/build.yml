@@ -106,7 +106,6 @@ jobs:
         run: |
           set -eux
           bash "${GITHUB_WORKSPACE}/diy-part2.sh"
-          # Re-index packages created/overwritten by diy-part2 (xray, lyaml, kmods)
           ./scripts/feeds install -a || true
 
       - name: Install and validate configuration
@@ -116,13 +115,10 @@ jobs:
           set -eux
           cp "${GITHUB_WORKSPACE}/.config" .config
 
-          # Force critical options so defconfig cannot drop them
           for opt in \
             CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y \
             CONFIG_PACKAGE_luci-app-passwall=y \
             CONFIG_IPV6=y \
-            CONFIG_PACKAGE_kmod-inet-diag=y \
-            CONFIG_PACKAGE_kmod-netlink-diag=y \
             CONFIG_PACKAGE_xray-core=y \
             CONFIG_PACKAGE_sing-box=y \
             CONFIG_PACKAGE_lyaml=y
@@ -132,49 +128,29 @@ jobs:
             echo "${opt}" >> .config
           done
 
+          # Explicitly keep diag kmods off (19.07 kernel has no package + forcing =m breaks build)
+          sed -i '/CONFIG_PACKAGE_kmod-inet-diag/d; /CONFIG_PACKAGE_kmod-netlink-diag/d' .config || true
+          echo '# CONFIG_PACKAGE_kmod-inet-diag is not set' >> .config
+          echo '# CONFIG_PACKAGE_kmod-netlink-diag is not set' >> .config
+
           make defconfig
 
-          # Hard requirements
           grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
           grep -q '^CONFIG_IPV6=y$' .config
 
-          # Xray 26.9.9 must exist (diy-part2 writes under package/feeds/...)
           if [ -f package/feeds/passwall_packages/xray-core/Makefile ]; then
             grep -q 'PKG_VERSION:=26.9.9' package/feeds/passwall_packages/xray-core/Makefile
           elif [ -f feeds/passwall_packages/xray-core/Makefile ]; then
             grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
           else
-            echo "ERROR: xray-core Makefile not found after diy-part2"
+            echo "ERROR: xray-core Makefile not found"
             find package feeds -name Makefile -path '*xray*' 2>/dev/null | head -20 || true
             exit 1
           fi
 
-          # lyaml
-          if [ -f package/lyaml/Makefile ]; then
-            grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
-          else
-            echo "ERROR: package/lyaml/Makefile missing"
-            exit 1
-          fi
-
-          # kmod selection: prefer package symbols; fall back to kernel config presence
-          if ! grep -q '^CONFIG_PACKAGE_kmod-inet-diag=y$' .config; then
-            echo "WARNING: CONFIG_PACKAGE_kmod-inet-diag not set after defconfig"
-            grep -E 'CONFIG_INET_DIAG' target/linux/generic/config-4.14 || true
-          fi
-          if ! grep -q '^CONFIG_PACKAGE_kmod-netlink-diag=y$' .config; then
-            echo "WARNING: CONFIG_PACKAGE_kmod-netlink-diag not set after defconfig"
-            grep -E 'CONFIG_NETLINK_DIAG' target/linux/generic/config-4.14 || true
-          fi
-
-          # Soft upstream version info
-          grep -E 'PKG_VERSION:=' package/feeds/passwall_packages/sing-box/Makefile 2>/dev/null \
-            || grep -E 'PKG_VERSION:=' feeds/passwall_packages/sing-box/Makefile 2>/dev/null \
-            || true
-          grep -E 'PKG_VERSION:=' package/feeds/passwall_packages/shadowsocksr-libev/Makefile 2>/dev/null \
-            || grep -E 'PKG_VERSION:=' feeds/passwall_packages/shadowsocksr-libev/Makefile 2>/dev/null \
-            || true
+          [ -f package/lyaml/Makefile ]
+          grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
 
           echo "Configuration validation passed."
 
