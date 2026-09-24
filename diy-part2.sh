@@ -16,7 +16,11 @@ GOLANG_DIR="${ROOT_DIR}/feeds/packages/lang/golang"
 KERNEL_NETSUPPORT_MK="${ROOT_DIR}/package/kernel/linux/modules/netsupport.mk"
 
 PREBUILT_SINGBOX="${PREBUILT_SINGBOX:-${GITHUB_WORKSPACE:-}/prebuilt/sing-box}"
+PREBUILT_SSLOCAL="${PREBUILT_SSLOCAL:-${GITHUB_WORKSPACE:-}/prebuilt/sslocal}"
+PREBUILT_SHADOW_TLS="${PREBUILT_SHADOW_TLS:-${GITHUB_WORKSPACE:-}/prebuilt/shadow-tls}"
 SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.1}"
+SS_RUST_VERSION="${SS_RUST_VERSION:-1.21.2}"
+SHADOW_TLS_VERSION="${SHADOW_TLS_VERSION:-0.1.5}"
 
 mkdir -p \
   "$(dirname "${DTS_FILE}")" \
@@ -426,7 +430,7 @@ EOF
 fi
 
 # ============================================================================
-# 8. Resolve PassWall packages path; drop rust packages
+# 8. Resolve PassWall packages path
 # ============================================================================
 PW_PKGS=""
 for d in "${PASSWALL_PACKAGES}" "${PASSWALL_PACKAGES_ALT}"; do
@@ -447,17 +451,6 @@ echo "Using PassWall packages at: ${PW_PKGS}"
 [ -f "${PW_PKGS}/shadowsocksr-libev/Makefile" ]
 [ -f "${PW_PKGS}/hysteria/Makefile" ]
 
-for rust_pkg in shadowsocks-rust shadow-tls; do
-  for base in "${PW_PKGS}" "${PASSWALL_PACKAGES}" "${PASSWALL_PACKAGES_ALT}" \
-              "${ROOT_DIR}/package/feeds/passwall_packages" \
-              "${ROOT_DIR}/feeds/passwall_packages"; do
-    if [ -d "${base}/${rust_pkg}" ]; then
-      echo "Removing rust-dependent package: ${base}/${rust_pkg}"
-      rm -rf "${base}/${rust_pkg}"
-    fi
-  done
-done
-
 if [ -f "${PASSWALL_MK}" ]; then
   sed -i \
     -e '/select PACKAGE_iptables-zz-legacy/d' \
@@ -466,8 +459,6 @@ if [ -f "${PASSWALL_MK}" ]; then
     -e '/select PACKAGE_kmod-nft-tproxy/d' \
     -e '/select PACKAGE_kmod-inet-diag/d' \
     -e '/select PACKAGE_kmod-netlink-diag/d' \
-    -e '/select PACKAGE_shadowsocks-rust/d' \
-    -e '/select PACKAGE_shadow-tls/d' \
     "${PASSWALL_MK}" || true
 fi
 
@@ -534,11 +525,10 @@ $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 11. sing-box 1.14.1 prebuilt binary (mipsle softfloat from Actions host)
+# 11. sing-box 1.14.1 prebuilt
 # ============================================================================
 if [ ! -f "${PREBUILT_SINGBOX}" ]; then
   echo "ERROR: prebuilt sing-box not found at ${PREBUILT_SINGBOX}"
-  echo "Workflow must run 'Prebuild sing-box' before diy-part2."
   exit 1
 fi
 
@@ -569,8 +559,7 @@ define Package/sing-box
 endef
 
 define Package/sing-box/description
-  sing-box ${SINGBOX_VERSION} prebuilt for MT7621A / OpenWrt 19.07
-  (GOARCH=mipsle GOMIPS=softfloat, host Go 1.23+).
+  sing-box ${SINGBOX_VERSION} prebuilt for MT7621A / OpenWrt 19.07.
 endef
 
 define Build/Prepare
@@ -593,32 +582,148 @@ endef
 EOF
 
 # ============================================================================
-# 12. Sanity checks
+# 12. shadowsocks-rust (sslocal) prebuilt — host cargo, no rust/host
+# ============================================================================
+if [ ! -f "${PREBUILT_SSLOCAL}" ]; then
+  echo "ERROR: prebuilt sslocal not found at ${PREBUILT_SSLOCAL}"
+  exit 1
+fi
+
+SSRUST_DIR="${PW_PKGS}/shadowsocks-rust"
+rm -rf "${SSRUST_DIR}"
+mkdir -p "${SSRUST_DIR}/files"
+cp -a "${PREBUILT_SSLOCAL}" "${SSRUST_DIR}/files/sslocal"
+chmod +x "${SSRUST_DIR}/files/sslocal"
+
+# Provide both meta package name and sslocal package name for PassWall selects
+cat > "${SSRUST_DIR}/Makefile" <<EOF
+include \$(TOPDIR)/rules.mk
+
+PKG_NAME:=shadowsocks-rust
+PKG_VERSION:=${SS_RUST_VERSION}
+PKG_RELEASE:=1
+
+PKG_LICENSE:=MIT
+PKGARCH:=mipsel_24kc
+
+include \$(INCLUDE_DIR)/package.mk
+
+define Package/shadowsocks-rust/Default
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=shadowsocks-rust
+  URL:=https://github.com/shadowsocks/shadowsocks-rust
+  DEPENDS:=+ca-bundle
+endef
+
+define Package/shadowsocks-rust-sslocal
+  \$(call Package/shadowsocks-rust/Default)
+  TITLE:=shadowsocks-rust sslocal (prebuilt mipsel)
+endef
+
+define Package/shadowsocks-rust-sslocal/description
+  sslocal ${SS_RUST_VERSION} host-crossbuilt for MT7621A / OpenWrt 19.07
+  (mipsel-unknown-linux-musl, -mno-mips16, GF_NI_DISABLE=1).
+endef
+
+define Build/Prepare
+	mkdir -p \$(PKG_BUILD_DIR)
+	cp -a ./files/sslocal \$(PKG_BUILD_DIR)/sslocal
+endef
+
+define Build/Configure
+endef
+
+define Build/Compile
+endef
+
+define Package/shadowsocks-rust-sslocal/install
+	\$(INSTALL_DIR) \$(1)/usr/bin
+	\$(INSTALL_BIN) \$(PKG_BUILD_DIR)/sslocal \$(1)/usr/bin/sslocal
+endef
+
+\$(eval \$(call BuildPackage,shadowsocks-rust-sslocal))
+EOF
+
+# ============================================================================
+# 13. shadow-tls prebuilt
+# ============================================================================
+if [ ! -f "${PREBUILT_SHADOW_TLS}" ]; then
+  echo "ERROR: prebuilt shadow-tls not found at ${PREBUILT_SHADOW_TLS}"
+  exit 1
+fi
+
+STLS_DIR="${PW_PKGS}/shadow-tls"
+rm -rf "${STLS_DIR}"
+mkdir -p "${STLS_DIR}/files"
+cp -a "${PREBUILT_SHADOW_TLS}" "${STLS_DIR}/files/shadow-tls"
+chmod +x "${STLS_DIR}/files/shadow-tls"
+
+cat > "${STLS_DIR}/Makefile" <<EOF
+include \$(TOPDIR)/rules.mk
+
+PKG_NAME:=shadow-tls
+PKG_VERSION:=${SHADOW_TLS_VERSION}
+PKG_RELEASE:=1
+
+PKG_LICENSE:=MIT
+PKGARCH:=mipsel_24kc
+
+include \$(INCLUDE_DIR)/package.mk
+
+define Package/shadow-tls
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=shadow-tls (prebuilt mipsel)
+  URL:=https://github.com/ihciah/shadow-tls
+  DEPENDS:=+ca-bundle
+endef
+
+define Package/shadow-tls/description
+  shadow-tls ${SHADOW_TLS_VERSION} host-crossbuilt for MT7621A / OpenWrt 19.07.
+endef
+
+define Build/Prepare
+	mkdir -p \$(PKG_BUILD_DIR)
+	cp -a ./files/shadow-tls \$(PKG_BUILD_DIR)/shadow-tls
+endef
+
+define Build/Configure
+endef
+
+define Build/Compile
+endef
+
+define Package/shadow-tls/install
+	\$(INSTALL_DIR) \$(1)/usr/bin
+	\$(INSTALL_BIN) \$(PKG_BUILD_DIR)/shadow-tls \$(1)/usr/bin/shadow-tls
+endef
+
+\$(eval \$(call BuildPackage,shadow-tls))
+EOF
+
+# ============================================================================
+# 14. Sanity checks
 # ============================================================================
 [ -f "${PASSWALL_MK}" ]
 [ -f "${SINGBOX_DIR}/Makefile" ]
-[ -f "${SINGBOX_DIR}/files/sing-box" ]
+[ -f "${SSRUST_DIR}/Makefile" ]
+[ -f "${STLS_DIR}/Makefile" ]
 [ -f "${PW_PKGS}/hysteria/Makefile" ]
 [ -f "${PW_PKGS}/shadowsocksr-libev/Makefile" ]
-[ ! -d "${PW_PKGS}/shadowsocks-rust" ]
-[ ! -d "${PW_PKGS}/shadow-tls" ]
 
 grep -q 'compatible = "xiaomi,mir4"' "${DTS_FILE}"
 grep -q 'define Device/xiaomi_mir4' "${IMAGE_MK}"
 grep -q 'xiaomi,mir4)' "${NETWORK_FILE}"
 grep -q 'luarocks make --pack-binary-rock' "${LYAML_DIR}/Makefile"
 grep -q 'PKG_VERSION:=26.9.9' "${XRAY_DIR}/Makefile"
-grep -q "PKG_VERSION:=${SINGBOX_VERSION}" "${SINGBOX_DIR}/Makefile"
-grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"
-grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"
 
 echo "============================================================"
 echo "MIR4 / OpenWrt 19.07 / PassWall compatibility patch completed"
 echo "Target: Xiaomi Mi Router 4 (MT7621A)"
-echo "PassWall: main 26.x"
-echo "Xray: 26.9.9 official MIPS32LE binary"
+echo "Xray: 26.9.9 official MIPS32LE"
 echo "sing-box: ${SINGBOX_VERSION} prebuilt mipsle softfloat"
-echo "SSR: upstream"
-echo "shadowsocks-rust / shadow-tls: REMOVED (need rust/host)"
-echo "kmod-inet-diag / kmod-netlink-diag: package defs present"
+echo "shadowsocks-rust sslocal: ${SS_RUST_VERSION} host cargo"
+echo "shadow-tls: ${SHADOW_TLS_VERSION} host cargo"
+echo "NaiveProxy: not included (Chromium C++)"
 echo "============================================================"
