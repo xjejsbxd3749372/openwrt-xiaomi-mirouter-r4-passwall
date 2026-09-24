@@ -182,12 +182,12 @@ jobs:
           generate_release_notes: true
           files: |
             firmware/*
- .config
-          grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
-          grep -q 'PKG_VERSION:=1.14.1' feeds/passwall_packages/sing-box/Makefile
-          grep -q 'PKG_VERSION:=2.5.6' feeds/passwall_packages/shadowsocksr-libev/Makefile
-          grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
-          grep -q '^CONFIG_PACKAGE_kmod-inet-diag=y
+            .config
+            grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
+            grep -q 'PKG_VERSION:=1.14.1' feeds/passwall_packages/sing-box/Makefile
+            grep -q 'PKG_VERSION:=2.5.6' feeds/passwall_packages/shadowsocksr-libev/Makefile
+            grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
+            grep -q '^CONFIG_PACKAGE_kmod-inet-diag=y
 
       - name: Download package sources
         working-directory: ${{ env.OPENWRT_DIR }}
