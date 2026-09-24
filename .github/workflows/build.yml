@@ -51,11 +51,7 @@ jobs:
         run: |
           set -eux
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential clang ccache ecj fastjar file g++ gawk gettext \
-            git libncurses5-dev libncursesw5-dev libssl-dev python3 \
-            python3-distutils rsync subversion swig unzip wget xsltproc \
-            zlib1g-dev jq quilt default-jre-headless
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang ccache ecj fastjar file g++ gawk gettext             git libncurses5-dev libncursesw5-dev libssl-dev python3             python3-distutils rsync subversion swig unzip wget xsltproc             zlib1g-dev jq quilt default-jre-headless
           sudo apt-get clean
           ccache --max-size=3G
 
@@ -116,7 +112,13 @@ jobs:
           make defconfig
           grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
-          grep -q '^CONFIG_IPV6=y
+          grep -q '^CONFIG_IPV6=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-inet-diag=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-netlink-diag=y$' .config
+          grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
+          grep -q 'PKG_VERSION:=1.14.1' feeds/passwall_packages/sing-box/Makefile
+          grep -q 'PKG_VERSION:=2.5.6' feeds/passwall_packages/shadowsocksr-libev/Makefile
+          grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
 
       - name: Download package sources
         working-directory: ${{ env.OPENWRT_DIR }}
@@ -140,10 +142,7 @@ jobs:
           out_dir="${GITHUB_WORKSPACE}/firmware"
           rm -rf "${out_dir}"
           mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \( \
-            -name '*.bin' -o -name '*.img' -o -name '*.tar' \
-            -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json' \
-          \) -exec cp -av {} "${out_dir}/" \;
+          find "${target_dir}" -maxdepth 1 -type f \(             -name '*.bin' -o -name '*.img' -o -name '*.tar'             -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json'           \) -exec cp -av {} "${out_dir}/" \;
           cp -av .config "${out_dir}/config.final"
           {
             echo "OpenWrt branch: ${REPO_BRANCH}"
@@ -183,206 +182,3 @@ jobs:
           files: |
             firmware/*
             .config
-            grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
-            grep -q 'PKG_VERSION:=1.14.1' feeds/passwall_packages/sing-box/Makefile
-            grep -q 'PKG_VERSION:=2.5.6' feeds/passwall_packages/shadowsocksr-libev/Makefile
-            grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
-            grep -q '^CONFIG_PACKAGE_kmod-inet-diag=y
-
-      - name: Download package sources
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: make download -j8 V=s
-
-      - name: Compile firmware
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -o pipefail
-          make -j"${BUILD_JOBS}" V=s 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
-
-      - name: Collect firmware
-        if: success()
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -eux
-          target_dir=bin/targets/ramips/mt7621
-          out_dir="${GITHUB_WORKSPACE}/firmware"
-          rm -rf "${out_dir}"
-          mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \( \
-            -name '*.bin' -o -name '*.img' -o -name '*.tar' \
-            -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json' \
-          \) -exec cp -av {} "${out_dir}/" \;
-          cp -av .config "${out_dir}/config.final"
-          {
-            echo "OpenWrt branch: ${REPO_BRANCH}"
-            echo "Target: Xiaomi Mi Router 4 / MT7621"
-            echo "Build run: ${GITHUB_RUN_NUMBER}"
-          } > "${out_dir}/BUILD_INFO.txt"
-          (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
-          ls -lah "${out_dir}"
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-passwall-${{ github.run_number }}
-          path: firmware/*
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-build-log-${{ github.run_number }}
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Publish GitHub Release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-{0}', github.run_number) }}
-          name: OpenWrt 19.07 MIR4 PassWall Build ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            firmware/*
-            .config
-            grep -q '^CONFIG_PACKAGE_kmod-netlink-diag=y
-
-      - name: Download package sources
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: make download -j8 V=s
-
-      - name: Compile firmware
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -o pipefail
-          make -j"${BUILD_JOBS}" V=s 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
-
-      - name: Collect firmware
-        if: success()
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -eux
-          target_dir=bin/targets/ramips/mt7621
-          out_dir="${GITHUB_WORKSPACE}/firmware"
-          rm -rf "${out_dir}"
-          mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \( \
-            -name '*.bin' -o -name '*.img' -o -name '*.tar' \
-            -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json' \
-          \) -exec cp -av {} "${out_dir}/" \;
-          cp -av .config "${out_dir}/config.final"
-          {
-            echo "OpenWrt branch: ${REPO_BRANCH}"
-            echo "Target: Xiaomi Mi Router 4 / MT7621"
-            echo "Build run: ${GITHUB_RUN_NUMBER}"
-          } > "${out_dir}/BUILD_INFO.txt"
-          (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
-          ls -lah "${out_dir}"
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-passwall-${{ github.run_number }}
-          path: firmware/*
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-build-log-${{ github.run_number }}
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Publish GitHub Release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-{0}', github.run_number) }}
-          name: OpenWrt 19.07 MIR4 PassWall Build ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            firmware/*
-            .config
-
-      - name: Download package sources
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: make download -j8 V=s
-
-      - name: Compile firmware
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -o pipefail
-          make -j"${BUILD_JOBS}" V=s 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
-
-      - name: Collect firmware
-        if: success()
-        working-directory: ${{ env.OPENWRT_DIR }}
-        shell: bash
-        run: |
-          set -eux
-          target_dir=bin/targets/ramips/mt7621
-          out_dir="${GITHUB_WORKSPACE}/firmware"
-          rm -rf "${out_dir}"
-          mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \( \
-            -name '*.bin' -o -name '*.img' -o -name '*.tar' \
-            -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json' \
-          \) -exec cp -av {} "${out_dir}/" \;
-          cp -av .config "${out_dir}/config.final"
-          {
-            echo "OpenWrt branch: ${REPO_BRANCH}"
-            echo "Target: Xiaomi Mi Router 4 / MT7621"
-            echo "Build run: ${GITHUB_RUN_NUMBER}"
-          } > "${out_dir}/BUILD_INFO.txt"
-          (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
-          ls -lah "${out_dir}"
-
-      - name: Upload firmware artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-passwall-${{ github.run_number }}
-          path: firmware/*
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-19.07-mir4-build-log-${{ github.run_number }}
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Publish GitHub Release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-{0}', github.run_number) }}
-          name: OpenWrt 19.07 MIR4 PassWall Build ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            firmware/*
