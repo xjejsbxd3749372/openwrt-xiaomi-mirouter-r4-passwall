@@ -1,37 +1,69 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FEEDS_FILE="feeds.conf.default"
-PASSWALL_UI_URL="https://github.com/Openwrt-Passwall/openwrt-passwall.git"
-PASSWALL_PACKAGES_URL="https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git"
+# OpenWrt 19.07 + fw876/helloworld
+# Method 1 from upstream README: clone directly into package/helloworld.
+# OpenWrt <= 21.02 also needs a newer Golang toolchain for Xray.
 
-[ -f "${FEEDS_FILE}" ] || {
-    echo "ERROR: ${FEEDS_FILE} not found"
+ROOT_DIR="$(pwd)"
+HELLOWORLD_DIR="${ROOT_DIR}/package/helloworld"
+GO_OVERLAY_DIR="/tmp/openwrt-packages-2305"
+GO_VERSION_BRANCH="openwrt-23.05"
+
+command -v git >/dev/null 2>&1 || {
+    echo "ERROR: git is required"
+    exit 1
+}
+command -v clang >/dev/null 2>&1 || {
+    echo "ERROR: clang is required. Install clang before building helloworld."
     exit 1
 }
 
-add_feed() {
-    local line="$1"
-    if ! grep -Fqx "${line}" "${FEEDS_FILE}"; then
-        printf "%s\n" "${line}" >> "${FEEDS_FILE}"
-    fi
-}
+echo "===== Clone fw876/helloworld (Method 1) ====="
+rm -rf "${HELLOWORLD_DIR}"
+git clone --depth=1 https://github.com/fw876/helloworld.git "${HELLOWORLD_DIR}"
 
-# PassWall main tracks the current 26.x line.  Do not pin it to an old release.
-add_feed "src-git passwall_packages ${PASSWALL_PACKAGES_URL};main"
-add_feed "src-git passwall_luci ${PASSWALL_UI_URL};main"
+echo "===== helloworld revision ====="
+git -C "${HELLOWORLD_DIR}" rev-parse HEAD
+git -C "${HELLOWORLD_DIR}" log -1 --oneline
 
-echo "===== PassWall upstream ====="
-git ls-remote "${PASSWALL_UI_URL}" refs/heads/main | head -n 1
-echo "===== PassWall packages upstream ====="
-git ls-remote "${PASSWALL_PACKAGES_URL}" refs/heads/main | head -n 1
+echo "===== Upgrade Golang toolchain for OpenWrt 19.07 ====="
+rm -rf "${GO_OVERLAY_DIR}"
+git clone --depth=1 --filter=blob:none --sparse \
+    --branch "${GO_VERSION_BRANCH}" \
+    https://github.com/openwrt/packages.git "${GO_OVERLAY_DIR}"
 
-echo "===== Required core versions ====="
-echo "PassWall: main (26.x)"
-echo "Xray: 26.9.9 official MIPS32LE binary"
-echo "sing-box: current 1.14.x PassWall package"
-echo "SSR: current 2.5.6 PassWall package"
-echo "hysteria: current PassWall package"
+git -C "${GO_OVERLAY_DIR}" sparse-checkout set lang/golang
 
-grep -E "passwall_packages|passwall_luci" "${FEEDS_FILE}"
+# helloworld's Xray/Hysteria Makefiles include:
+#   feeds/packages/lang/golang/golang-package.mk
+# Therefore replace only the Golang toolchain subtree, not the whole packages feed.
+if [ ! -f "${GO_OVERLAY_DIR}/lang/golang/golang-package.mk" ]; then
+    echo "ERROR: Golang package files were not found in ${GO_VERSION_BRANCH}"
+    exit 1
+fi
+
+rm -rf "${ROOT_DIR}/feeds/packages/lang/golang"
+mkdir -p "${ROOT_DIR}/feeds/packages/lang"
+cp -a "${GO_OVERLAY_DIR}/lang/golang" "${ROOT_DIR}/feeds/packages/lang/golang"
+
+echo "===== Golang package source ====="
+grep -E '^(PKG_NAME|PKG_VERSION|GO_VERSION|GO_HASH)' \
+    "${ROOT_DIR}/feeds/packages/lang/golang/golang/Makefile" \
+    "${ROOT_DIR}/feeds/packages/lang/golang/golang-values.mk" 2>/dev/null || true
+
+echo "===== Required helloworld packages ====="
+for p in \
+    luci-app-ssr-plus \
+    xray-core \
+    shadowsocksr-libev \
+    shadowsocks-libev \
+    hysteria
+do
+    test -f "${HELLOWORLD_DIR}/${p}/Makefile" || {
+        echo "ERROR: helloworld package missing: ${p}"
+        exit 1
+    }
+done
+
 echo "diy-part1.sh completed."
