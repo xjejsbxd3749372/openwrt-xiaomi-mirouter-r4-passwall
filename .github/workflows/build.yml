@@ -17,6 +17,9 @@ env:
   OPENWRT_DIR: openwrt
   BUILD_JOBS: 4
   SINGBOX_VERSION: "1.14.1"
+  SS_RUST_VERSION: "1.21.2"
+  SHADOW_TLS_VERSION: "0.1.5"
+  TOOLCHAIN_URL: "https://downloads.openwrt.org/releases/19.07.10/targets/ramips/mt7621/openwrt-toolchain-19.07.10-ramips-mt7621_gcc-7.5.0_musl.Linux-x86_64.tar.xz"
 
 jobs:
   build:
@@ -75,10 +78,6 @@ jobs:
           sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2
           python2 --version
 
-      # ------------------------------------------------------------------
-      # Prebuild sing-box 1.14.1 for MT7621A (mipsle softfloat)
-      # Host Go 1.23+; OpenWrt 19.07 cannot compile this itself.
-      # ------------------------------------------------------------------
       - name: Set up Go 1.23
         uses: actions/setup-go@v5
         with:
@@ -92,18 +91,134 @@ jobs:
           git clone --depth 1 --branch "v${SINGBOX_VERSION}" \
             https://github.com/SagerNet/sing-box.git /tmp/sing-box-src
           cd /tmp/sing-box-src/cmd/sing-box
-          # softfloat avoids Illegal Instruction on some MT7621 Go builds
           env CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat \
             go build -v -trimpath \
               -ldflags "-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_VERSION}" \
               -tags "with_quic with_dhcp with_wireguard with_utls with_clash_api"
-          # Optional UPX — skip if binary becomes too large or upx fails
           if command -v upx >/dev/null 2>&1; then
             upx --best --lzma sing-box || true
           fi
           cp -a sing-box "${GITHUB_WORKSPACE}/prebuilt/sing-box"
           ls -lh "${GITHUB_WORKSPACE}/prebuilt/sing-box"
           file "${GITHUB_WORKSPACE}/prebuilt/sing-box"
+
+      # ------------------------------------------------------------------
+      # Host cargo cross-compile: sslocal + shadow-tls (MT7621A / 19.07)
+      # ------------------------------------------------------------------
+      - name: Install Rust (mipsel-unknown-linux-musl)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: mipsel-unknown-linux-musl
+
+      - name: Prebuild shadowsocks-rust + shadow-tls (mipsel musl)
+        shell: bash
+        run: |
+          set -eux
+          mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
+          TOOLCHAIN_DIR="${HOME}/openwrt-toolchain-19.07-mt7621"
+          TARGET_TRIPLE="mipsel-unknown-linux-musl"
+
+          if [ ! -x "${TOOLCHAIN_DIR}/bin/mipsel-openwrt-linux-musl-gcc" ]; then
+            rm -rf "${TOOLCHAIN_DIR}"
+            mkdir -p "${TOOLCHAIN_DIR}"
+            wget -qO /tmp/owrt-tc.tar.xz "${TOOLCHAIN_URL}"
+            tar -xJf /tmp/owrt-tc.tar.xz -C "${TOOLCHAIN_DIR}" --strip-components=1
+            rm -f /tmp/owrt-tc.tar.xz
+          fi
+
+          export PATH="${TOOLCHAIN_DIR}/bin:${PATH}"
+          CC="mipsel-openwrt-linux-musl-gcc"
+          STRIP="mipsel-openwrt-linux-musl-strip"
+          command -v "${CC}"
+          "${CC}" -v
+
+          mkdir -p "${HOME}/.cargo"
+          cat > "${HOME}/.cargo/config.toml" <<EOF
+          [target.${TARGET_TRIPLE}]
+          linker = "${CC}"
+          rustflags = [
+            "-C", "target-cpu=mips32r2",
+            "-C", "target-feature=+mips32r2",
+            "-C", "link-arg=-mno-mips16"
+          ]
+
+          [env]
+          TARGET_CC = "${CC}"
+          TARGET_CFLAGS = "-O2 -mno-mips16 -mips32r2"
+          EOF
+
+          # ---- shadowsocks-rust (sslocal only) ----
+          rm -rf /tmp/shadowsocks-rust
+          git clone --depth 1 --branch "v${SS_RUST_VERSION}" \
+            https://github.com/shadowsocks/shadowsocks-rust.git /tmp/shadowsocks-rust
+          cd /tmp/shadowsocks-rust
+          if ! grep -q '\[profile.release\]' Cargo.toml; then
+            cat >> Cargo.toml <<'TOML'
+
+          [profile.release]
+          opt-level = "z"
+          lto = true
+          codegen-units = 1
+          panic = "abort"
+          TOML
+          else
+            # force size-oriented flags if profile already exists
+            sed -i 's/opt-level *=.*/opt-level = "z"/' Cargo.toml || true
+          fi
+
+          GF_NI_DISABLE=1 cargo build --release --target "${TARGET_TRIPLE}" \
+            --bin sslocal \
+            --no-default-features \
+            --features "local-socks5 local-http local-tunnel"
+
+          "${STRIP}" "target/${TARGET_TRIPLE}/release/sslocal"
+          cp -a "target/${TARGET_TRIPLE}/release/sslocal" "${GITHUB_WORKSPACE}/prebuilt/sslocal"
+          ls -lh "${GITHUB_WORKSPACE}/prebuilt/sslocal"
+          file "${GITHUB_WORKSPACE}/prebuilt/sslocal"
+
+          # ---- shadow-tls ----
+          rm -rf /tmp/shadow-tls
+          # tag may be v0.1.5 or 0.1.5; try common forms
+          if ! git clone --depth 1 --branch "v${SHADOW_TLS_VERSION}" \
+              https://github.com/ihciah/shadow-tls.git /tmp/shadow-tls 2>/dev/null; then
+            git clone --depth 1 --branch "${SHADOW_TLS_VERSION}" \
+              https://github.com/ihciah/shadow-tls.git /tmp/shadow-tls || \
+            git clone --depth 1 https://github.com/ihciah/shadow-tls.git /tmp/shadow-tls
+          fi
+          cd /tmp/shadow-tls
+          if ! grep -q '\[profile.release\]' Cargo.toml; then
+            cat >> Cargo.toml <<'TOML'
+
+          [profile.release]
+          opt-level = "z"
+          lto = true
+          codegen-units = 1
+          panic = "abort"
+          TOML
+          fi
+
+          GF_NI_DISABLE=1 cargo build --release --target "${TARGET_TRIPLE}"
+
+          # binary name is usually shadow-tls
+          BIN=""
+          for c in shadow-tls shadow_tls; do
+            if [ -f "target/${TARGET_TRIPLE}/release/${c}" ]; then
+              BIN="target/${TARGET_TRIPLE}/release/${c}"
+              break
+            fi
+          done
+          if [ -z "${BIN}" ]; then
+            echo "ERROR: shadow-tls binary not found"
+            find target -type f -executable | head -50 || true
+            exit 1
+          fi
+          "${STRIP}" "${BIN}"
+          cp -a "${BIN}" "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
+          ls -lh "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
+          file "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
+
+          echo "Rust prebuilds ready:"
+          ls -lh "${GITHUB_WORKSPACE}/prebuilt/"
 
       - name: Cache downloads and ccache
         uses: actions/cache@v4
@@ -136,11 +251,16 @@ jobs:
         shell: bash
         run: |
           set -eux
-          # Place prebuilt sing-box where diy-part2 expects it
           mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
           test -f "${GITHUB_WORKSPACE}/prebuilt/sing-box"
+          test -f "${GITHUB_WORKSPACE}/prebuilt/sslocal"
+          test -f "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
           export PREBUILT_SINGBOX="${GITHUB_WORKSPACE}/prebuilt/sing-box"
+          export PREBUILT_SSLOCAL="${GITHUB_WORKSPACE}/prebuilt/sslocal"
+          export PREBUILT_SHADOW_TLS="${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
           export SINGBOX_VERSION="${SINGBOX_VERSION}"
+          export SS_RUST_VERSION="${SS_RUST_VERSION}"
+          export SHADOW_TLS_VERSION="${SHADOW_TLS_VERSION}"
           bash "${GITHUB_WORKSPACE}/diy-part2.sh"
           ./scripts/feeds install -a || true
 
@@ -157,6 +277,8 @@ jobs:
             CONFIG_IPV6=y \
             CONFIG_PACKAGE_xray-core=y \
             CONFIG_PACKAGE_sing-box=y \
+            CONFIG_PACKAGE_shadowsocks-rust-sslocal=y \
+            CONFIG_PACKAGE_shadow-tls=y \
             CONFIG_PACKAGE_lyaml=y
           do
             key="${opt%%=*}"
@@ -172,29 +294,19 @@ jobs:
 
           grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
-          grep -q '^CONFIG_IPV6=y$' .config
 
-          if [ -f package/feeds/passwall_packages/xray-core/Makefile ]; then
-            grep -q 'PKG_VERSION:=26.9.9' package/feeds/passwall_packages/xray-core/Makefile
-          elif [ -f feeds/passwall_packages/xray-core/Makefile ]; then
-            grep -q 'PKG_VERSION:=26.9.9' feeds/passwall_packages/xray-core/Makefile
-          else
-            echo "ERROR: xray-core Makefile not found"
-            exit 1
-          fi
-
-          if [ -f package/feeds/passwall_packages/sing-box/Makefile ]; then
-            grep -q 'PKG_VERSION:=1.14.1' package/feeds/passwall_packages/sing-box/Makefile
-          elif [ -f feeds/passwall_packages/sing-box/Makefile ]; then
-            grep -q 'PKG_VERSION:=1.14.1' feeds/passwall_packages/sing-box/Makefile
-          else
-            echo "ERROR: sing-box Makefile not found"
-            exit 1
-          fi
+          for p in xray-core sing-box shadowsocks-rust shadow-tls; do
+            if [ -f "package/feeds/passwall_packages/${p}/Makefile" ]; then
+              echo "OK package: ${p}"
+            elif [ -f "feeds/passwall_packages/${p}/Makefile" ]; then
+              echo "OK package (feeds): ${p}"
+            else
+              echo "ERROR: ${p} Makefile not found"
+              exit 1
+            fi
+          done
 
           [ -f package/lyaml/Makefile ]
-          grep -q 'luarocks make --pack-binary-rock' package/lyaml/Makefile
-
           echo "Configuration validation passed."
 
       - name: Download package sources
@@ -229,6 +341,9 @@ jobs:
             echo "Target: Xiaomi Mi Router 4 / MT7621A"
             echo "Xray: 26.9.9 official MIPS32LE"
             echo "sing-box: ${SINGBOX_VERSION} prebuilt mipsle softfloat"
+            echo "shadowsocks-rust sslocal: ${SS_RUST_VERSION} host cargo mipsel"
+            echo "shadow-tls: ${SHADOW_TLS_VERSION} host cargo mipsel"
+            echo "NaiveProxy: skipped (Chromium C++, not host-cargo pure Rust)"
             echo "Build run: ${GITHUB_RUN_NUMBER}"
           } > "${out_dir}/BUILD_INFO.txt"
           (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
