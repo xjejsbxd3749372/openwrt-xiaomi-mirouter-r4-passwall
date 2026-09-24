@@ -12,6 +12,7 @@ UBOOTENV_FILE="${ROOT_DIR}/package/boot/uboot-envtools/files/ramips"
 PASSWALL_MK="${ROOT_DIR}/package/feeds/passwall_luci/luci-app-passwall/Makefile"
 PASSWALL_PACKAGES="${ROOT_DIR}/package/feeds/passwall_packages"
 GOLANG_DIR="${ROOT_DIR}/feeds/packages/lang/golang"
+KERNEL_NETSUPPORT_MK="${ROOT_DIR}/package/kernel/linux/modules/netsupport.mk"
 
 mkdir -p \
   "$(dirname "${DTS_FILE}")" \
@@ -367,63 +368,133 @@ $(eval $(call BuildPackage,lyaml))
 EOF
 
 # ============================================================================
-# 7. SSR recipe
+# 7. Keep current PassWall SSR / sing-box / hysteria recipes
 # ============================================================================
-SSR_DIR="${PASSWALL_PACKAGES}/shadowsocksr-libev"
-rm -rf "${SSR_DIR}"
-mkdir -p "${SSR_DIR}"
+# The current PassWall packages main branch is authoritative here.  Do not
+# overwrite SSR or sing-box with an older local recipe.
+[ -f "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile" ]
+[ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
+[ -f "${PASSWALL_PACKAGES}/hysteria/Makefile" ]
 
-cat > "${SSR_DIR}/Makefile" <<'EOF'
+# ============================================================================
+# 8. Modern Go host toolchain required by sing-box 1.14.x
+# ============================================================================
+
+rm -rf "${GOLANG_DIR}"
+git clone --depth 1 --single-branch --branch 26.x \
+  https://github.com/sbwml/packages_lang_golang.git "${GOLANG_DIR}"
+
+# ============================================================================
+# 9. Xray 26.9.9 official upstream MIPS32LE binary
+# ============================================================================
+
+XRAY_DIR="${PASSWALL_PACKAGES}/xray-core"
+rm -rf "${XRAY_DIR}"
+mkdir -p "${XRAY_DIR}"
+
+cat > "${XRAY_DIR}/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=shadowsocksr-libev
-PKG_VERSION:=2.5.6
-PKG_RELEASE:=14
+PKG_NAME:=xray-core
+PKG_VERSION:=26.9.9
+PKG_RELEASE:=1
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/shadowsocksrr/shadowsocksr-libev.git
-PKG_SOURCE_VERSION:=4799b312b8244ec067b8ae9ba4b85c877858976c
+PKG_SOURCE:=Xray-linux-mips32le.zip
+PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core/releases/download/v$(PKG_VERSION)/
+PKG_HASH:=e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2
 
-PKG_LICENSE:=GPL-3.0
+PKG_LICENSE:=MPL-2.0
 PKG_LICENSE_FILES:=LICENSE
-PKG_FIXUP:=autoreconf
-PKG_USE_MIPS16:=0
-PKG_BUILD_FLAGS:=no-mips16 gc-sections lto
-PKG_BUILD_PARALLEL:=1
-PKG_INSTALL:=1
+PKGARCH:=mipsel_24kc
 
 include $(INCLUDE_DIR)/package.mk
 
-define Package/shadowsocksr-libev/Default
-  define Package/shadowsocksr-libev-ssr-$(1)
-    SECTION:=net
-    CATEGORY:=Network
-    SUBMENU:=Web Servers/Proxies
-    TITLE:=shadowsocksr-libev ssr-$(1)
-    URL:=https://github.com/shadowsocksrr/shadowsocksr-libev
-    DEPENDS:=+libev +libsodium +libopenssl +libpthread +libpcre2 +libudns +zlib
-  endef
-
-  define Package/shadowsocksr-libev-ssr-$(1)/install
-	$$(INSTALL_DIR) $$(1)/usr/bin
-	$$(INSTALL_BIN) $$(PKG_INSTALL_DIR)/usr/bin/ss-$(1) $$(1)/usr/bin/ssr-$(1)
-  endef
+define Package/xray-core
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=Xray-core
+  URL:=https://xtls.github.io
+  DEPENDS:=+ca-bundle
 endef
 
-SHADOWSOCKSR_COMPONENTS:=check local nat redir server
-
-define shadowsocksr-libev/templates
-  $(foreach component,$(SHADOWSOCKSR_COMPONENTS),$(call Package/shadowsocksr-libev/Default,$(component)))
+define Package/xray-core/description
+  Xray-core 26.9.9 official upstream MIPS32LE release binary.
 endef
-$(eval $(call shadowsocksr-libev/templates))
 
-CONFIGURE_ARGS += --disable-documentation --disable-ssp --disable-assert --enable-system-shared-lib
-TARGET_LDFLAGS += -Wl,--as-needed
+define Build/Compile
+endef
 
-$(foreach component,$(SHADOWSOCKSR_COMPONENTS),$(eval $(call BuildPackage,shadowsocksr-libev-ssr-$(component))))
+define Package/xray-core/install
+  $(INSTALL_DIR) $(1)/usr/bin
+  $(INSTALL_BIN) $(PKG_BUILD_DIR)/xray $(1)/usr/bin/xray
+endef
+
+$(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
+# 10. OpenWrt 19.07 / Linux 4.14: backport the missing diag kmod package defs
+# ============================================================================
+
+if ! grep -q "KernelPackage/netlink-diag" "${KERNEL_NETSUPPORT_MK}"; then
+cat >> "${KERNEL_NETSUPPORT_MK}" <<'EOF'
+
+define KernelPackage/netlink-diag
+  SUBMENU:=$(NETWORK_SUPPORT_MENU)
+  TITLE:=Netlink diag support for ss utility
+  KCONFIG:=CONFIG_NETLINK_DIAG
+  FILES:=$(LINUX_DIR)/net/netlink/netlink_diag.ko
+  AUTOLOAD:=$(call AutoLoad,31,netlink-diag)
+endef
+
+define KernelPackage/netlink-diag/description
+  Netlink diag is a module made for use by iproute2 ss.
+endef
+
+$(eval $(call KernelPackage,netlink-diag))
+
+define KernelPackage/inet-diag
+  SUBMENU:=$(NETWORK_SUPPORT_MENU)
+  TITLE:=INET diag support for ss utility
+  KCONFIG:= \
+    CONFIG_INET_DIAG \
+    CONFIG_INET_TCP_DIAG \
+    CONFIG_INET_UDP_DIAG \
+    CONFIG_INET_RAW_DIAG \
+    CONFIG_INET_DIAG_DESTROY=n
+  FILES:= \
+    $(LINUX_DIR)/net/ipv4/inet_diag.ko \
+    $(LINUX_DIR)/net/ipv4/tcp_diag.ko \
+    $(LINUX_DIR)/net/ipv4/udp_diag.ko \
+    $(LINUX_DIR)/net/ipv4/raw_diag.ko
+  AUTOLOAD:=$(call AutoLoad,31,inet_diag tcp_diag udp_diag raw_diag)
+endef
+
+define KernelPackage/inet-diag/description
+  Support for INET socket monitoring used by native Linux tools such as ss.
+endef
+
+$(eval $(call KernelPackage,inet-diag))
+EOF
+fi
+
+# Linux 4.14 already contains these options; the source archive confirms they
+# were simply disabled in the generic config.  Build them as modules.
+python3 - "${ROOT_DIR}/target/linux/generic/config-4.14" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+for old,new in {
+    "# CONFIG_INET_DIAG is not set":"CONFIG_INET_DIAG=m",
+    "# CONFIG_INET_TCP_DIAG is not set":"CONFIG_INET_TCP_DIAG=m",
+    "# CONFIG_INET_UDP_DIAG is not set":"CONFIG_INET_UDP_DIAG=m",
+    "# CONFIG_INET_RAW_DIAG is not set":"CONFIG_INET_RAW_DIAG=m",
+    "# CONFIG_NETLINK_DIAG is not set":"CONFIG_NETLINK_DIAG=m",
+}.items():
+    s=s.replace(old,new)
+p.write_text(s)
+PY
 # 8. Go toolchain + Xray 26.6.1
 # ============================================================================
 rm -rf "${GOLANG_DIR}"
@@ -480,11 +551,12 @@ $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 9. sanity checks
+# 11. Sanity checks
 # ============================================================================
 [ -f "${PASSWALL_MK}" ]
 [ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
 [ -f "${PASSWALL_PACKAGES}/hysteria/Makefile" ]
+[ -f "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile" ]
 
 grep -q 'compatible = "xiaomi,mir4"' "${DTS_FILE}"
 grep -q 'mediatek,portmap = "llllw"' "${DTS_FILE}"
@@ -492,10 +564,19 @@ grep -q 'define Device/xiaomi_mir4' "${IMAGE_MK}"
 grep -q 'xiaomi,mir4)' "${NETWORK_FILE}"
 grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
 grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
-grep -q 'PKG_VERSION:=2.5.6' "${SSR_DIR}/Makefile"
-grep -q '4799b312b8244ec067b8ae9ba4b85c877858976c' "${SSR_DIR}/Makefile"
-grep -q 'PKG_VERSION:=26.6.1' "${XRAY_DIR}/Makefile"
+grep -q 'luarocks make --pack-binary-rock' "${LYAML_DIR}/Makefile"
+grep -q 'PKG_VERSION:=26.9.9' "${XRAY_DIR}/Makefile"
+grep -q 'PKG_VERSION:=1.14.1' "${PASSWALL_PACKAGES}/sing-box/Makefile"
+grep -q 'PKG_VERSION:=2.5.6' "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile"
+grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"
+grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"
+grep -q 'CONFIG_INET_DIAG=m' "${ROOT_DIR}/target/linux/generic/config-4.14"
+grep -q 'CONFIG_NETLINK_DIAG=m' "${ROOT_DIR}/target/linux/generic/config-4.14"
 
 echo "============================================================"
-echo "MIR4 / OpenWrt 19.07 patch completed"
+echo "MIR4 / OpenWrt 19.07 / PassWall compatibility patch completed"
+echo "PassWall: main 26.x"
+echo "Xray: 26.9.9 official MIPS32LE binary"
+echo "sing-box: 1.14.1 current PassWall package"
+echo "SSR: 2.5.6 current PassWall package"
 echo "============================================================"

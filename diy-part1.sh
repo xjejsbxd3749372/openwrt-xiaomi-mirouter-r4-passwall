@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 FEEDS_FILE="feeds.conf.default"
-
-# Latest PassWall UI is tracked from main. Xray is packaged separately as the
-# current MIPS32 little-endian release binary from diy-part2.sh, which avoids
-# forcing a modern Go toolchain into the OpenWrt 19.07 build system.
-XRAY_VERSION="26.9.9"
-XRAY_ASSET="Xray-linux-mips32le.zip"
-XRAY_SHA256="e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2"
+PASSWALL_UI_URL="https://github.com/Openwrt-Passwall/openwrt-passwall.git"
+PASSWALL_PACKAGES_URL="https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git"
 
 [ -f "${FEEDS_FILE}" ] || {
     echo "ERROR: ${FEEDS_FILE} not found"
@@ -18,44 +12,26 @@ XRAY_SHA256="e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2"
 
 add_feed() {
     local line="$1"
-
     if ! grep -Fqx "${line}" "${FEEDS_FILE}"; then
-        printf '%s\n' "${line}" >> "${FEEDS_FILE}"
+        printf "%s\n" "${line}" >> "${FEEDS_FILE}"
     fi
 }
 
-# ---------------------------------------------------------------------------
-# PassWall
-# ---------------------------------------------------------------------------
+# PassWall main tracks the current 26.x line.  Do not pin it to an old release.
+add_feed "src-git passwall_packages ${PASSWALL_PACKAGES_URL};main"
+add_feed "src-git passwall_luci ${PASSWALL_UI_URL};main"
 
-add_feed "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main"
-add_feed "src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main"
+echo "===== PassWall upstream ====="
+git ls-remote "${PASSWALL_UI_URL}" refs/heads/main | head -n 1
+echo "===== PassWall packages upstream ====="
+git ls-remote "${PASSWALL_PACKAGES_URL}" refs/heads/main | head -n 1
 
-echo "===== PassWall ====="
-git ls-remote https://github.com/Openwrt-Passwall/openwrt-passwall.git     refs/heads/main | head -n 1 || true
+echo "===== Required core versions ====="
+echo "PassWall: main (26.x)"
+echo "Xray: 26.9.9 official MIPS32LE binary"
+echo "sing-box: current 1.14.x PassWall package"
+echo "SSR: current 2.5.6 PassWall package"
+echo "hysteria: current PassWall package"
 
-echo "===== PassWall Packages ====="
-git ls-remote https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git     refs/heads/main | head -n 1 || true
-
-echo "===== Xray release ====="
-echo "version=${XRAY_VERSION}"
-echo "asset=${XRAY_ASSET}"
-echo "sha256=${XRAY_SHA256}"
-
-echo "===== Sing-box upstream (informational only) ====="
-git ls-remote https://github.com/SagerNet/sing-box.git     refs/heads/main | head -n 1 || true
-
-echo "===== Domain rules (informational only) ====="
-git ls-remote https://github.com/v2fly/domain-list-community.git     refs/heads/master | head -n 1 || true
-
-echo "===== GeoIP rules (informational only) ====="
-git ls-remote https://github.com/v2fly/geoip.git     refs/heads/master | head -n 1 || true
-
-# Xray is not built from current Go source on OpenWrt 19.07. The MIPS32LE
-# release binary is installed by diy-part2.sh.
-# Sing-box is deliberately excluded from the 128 MiB target.
-
-echo "===== feeds.conf.default ====="
-grep -E 'passwall_packages|passwall_luci' "${FEEDS_FILE}"
-
+grep -E "passwall_packages|passwall_luci" "${FEEDS_FILE}"
 echo "diy-part1.sh completed."
