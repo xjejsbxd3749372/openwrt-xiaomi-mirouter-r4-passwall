@@ -52,10 +52,20 @@ jobs:
       - name: Create swap
         run: |
           set -eux
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          if swapon --show | grep -q '/swapfile'; then
+            echo "swap already enabled"
+          else
+            if [ -f /swapfile ]; then
+              sudo swapoff /swapfile || true
+              sudo rm -f /swapfile
+            fi
+            sudo fallocate -l 8G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
+          free -h
+          swapon --show
 
       - name: Clone OpenWrt 19.07
         run: |
@@ -87,12 +97,14 @@ jobs:
 
           test -f package/helloworld/luci-app-ssr-plus/Makefile
           test -f package/helloworld/xray-core/Makefile
-          test -f package/feeds/golang27/lang/golang/golang-package.mk
-          test -f package/feeds/compat23/lang/rust/Makefile
-          test -f package/feeds/modern/lang/lua/lyaml/Makefile
-          test -f package/feeds/kcptun/kcptun/Makefile
+          test -f package/feeds/golang27/golang/Makefile
+          test -f package/feeds/golang27/golang/golang-package.mk
+          test -f package/feeds/compat23/rust/Makefile
+          test -f package/feeds/compat23/rust/rust-package.mk
+          test -f package/feeds/modern/lyaml/Makefile
+          test -f package/feeds/kcptun/kcptun-client/Makefile
 
-          echo "MIR4 + helloworld + real Golang 1.27 + Rust host validation passed."
+          echo "MIR4 + helloworld + real Golang 27.x + Rust host + lyaml + kcptun validation passed."
 
       - name: Build
         working-directory: openwrt

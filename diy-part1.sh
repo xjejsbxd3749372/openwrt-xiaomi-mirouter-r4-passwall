@@ -53,10 +53,11 @@ done
 
 ./scripts/feeds install luci-app-ssr-plus xray-core hysteria shadowsocksr-libev shadowsocks-libev -p helloworld -f
 
-test -f "${ROOT_DIR}/feeds/golang27/lang/golang/golang-package.mk"
-test -f "${ROOT_DIR}/feeds/compat23/lang/rust/Makefile"
-test -f "${ROOT_DIR}/feeds/compat23/lang/rust/rust-package.mk"
-test -f "${ROOT_DIR}/feeds/modern/lang/lua/lyaml/Makefile"
-test -f "${ROOT_DIR}/feeds/kcptun/Makefile"
+test -f "${ROOT_DIR}/feeds/golang27/golang/Makefile"
+test -f "${ROOT_DIR}/feeds/golang27/golang/golang-package.mk"
+test -f "${ROOT_DIR}/feeds/compat23/rust/Makefile"
+test -f "${ROOT_DIR}/feeds/compat23/rust/rust-package.mk"
+test -f "${ROOT_DIR}/feeds/modern/lyaml/Makefile"
+test -f "${ROOT_DIR}/feeds/kcptun/kcptun-client/Makefile"
 test -f "${HELLOWORLD_DIR}/luci-app-ssr-plus/Makefile"
 test -f "${HELLOWORLD_DIR}/xray-core/Makefile"
