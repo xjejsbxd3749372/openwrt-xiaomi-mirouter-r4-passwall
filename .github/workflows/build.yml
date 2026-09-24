@@ -111,10 +111,11 @@ jobs:
           export NAIVEPROXY_VERSION="${NAIVEPROXY_VERSION}"
           bash "${GITHUB_WORKSPACE}/scripts/fetch-naiveproxy.sh" "${GITHUB_WORKSPACE}/prebuilt"
 
-      - name: Install Rust (mipsel-unknown-linux-musl)
-        uses: dtolnay/rust-toolchain@stable
+      # stable no longer ships rust-std for mipsel-unknown-linux-musl
+      - name: Install Rust nightly + rust-src (for -Z build-std)
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: mipsel-unknown-linux-musl
+          components: rust-src
 
       - name: Prebuild shadowsocks-rust + shadow-tls (mipsel musl)
         shell: bash
@@ -138,6 +139,12 @@ jobs:
           command -v "${CC}"
           "${CC}" -v
 
+          # Shrink naiveproxy if present (release often ships unstripped ~14MB)
+          if [ -f "${GITHUB_WORKSPACE}/prebuilt/naiveproxy" ]; then
+            "${STRIP}" "${GITHUB_WORKSPACE}/prebuilt/naiveproxy" || true
+            ls -lh "${GITHUB_WORKSPACE}/prebuilt/naiveproxy"
+          fi
+
           mkdir -p "${HOME}/.cargo"
           cat > "${HOME}/.cargo/config.toml" <<EOF
           [target.${TARGET_TRIPLE}]
@@ -145,13 +152,17 @@ jobs:
           rustflags = [
             "-C", "target-cpu=mips32r2",
             "-C", "target-feature=+mips32r2",
-            "-C", "link-arg=-mno-mips16"
+            "-C", "link-arg=-mno-mips16",
+            "-C", "panic=abort"
           ]
 
           [env]
           TARGET_CC = "${CC}"
           TARGET_CFLAGS = "-O2 -mno-mips16 -mips32r2"
           EOF
+
+          # cargo nightly must rebuild std for this target
+          CARGO_BUILD_STD=(cargo +nightly build -Z build-std=std,panic_abort --release --target "${TARGET_TRIPLE}")
 
           rm -rf /tmp/shadowsocks-rust
           git clone --depth 1 --branch "v${SS_RUST_VERSION}" \
@@ -170,7 +181,7 @@ jobs:
             sed -i 's/opt-level *=.*/opt-level = "z"/' Cargo.toml || true
           fi
 
-          GF_NI_DISABLE=1 cargo build --release --target "${TARGET_TRIPLE}" \
+          GF_NI_DISABLE=1 "${CARGO_BUILD_STD[@]}" \
             --bin sslocal \
             --no-default-features \
             --features "local-socks5 local-http local-tunnel"
@@ -198,7 +209,7 @@ jobs:
           TOML
           fi
 
-          GF_NI_DISABLE=1 cargo build --release --target "${TARGET_TRIPLE}"
+          GF_NI_DISABLE=1 "${CARGO_BUILD_STD[@]}"
 
           BIN=""
           for c in shadow-tls shadow_tls; do
@@ -341,8 +352,8 @@ jobs:
             echo "Target: Xiaomi Mi Router 4 / MT7621A"
             echo "Xray: 26.9.9 official MIPS32LE"
             echo "sing-box: ${SINGBOX_VERSION} prebuilt mipsle softfloat"
-            echo "shadowsocks-rust sslocal: ${SS_RUST_VERSION} host cargo mipsel"
-            echo "shadow-tls: ${SHADOW_TLS_VERSION} host cargo mipsel"
+            echo "shadowsocks-rust sslocal: ${SS_RUST_VERSION} host cargo mipsel (nightly build-std)"
+            echo "shadow-tls: ${SHADOW_TLS_VERSION} host cargo mipsel (nightly build-std)"
             echo "naiveproxy: ${NAIVEPROXY_VERSION} official openwrt-mipsel_24kc-static"
             echo "Build run: ${GITHUB_RUN_NUMBER}"
           } > "${out_dir}/BUILD_INFO.txt"
