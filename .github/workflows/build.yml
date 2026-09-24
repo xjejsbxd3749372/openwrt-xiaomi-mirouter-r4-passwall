@@ -35,6 +35,20 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang llvm ccache file g++ gawk gettext git             libncurses5-dev libncursesw5-dev libssl-dev python3             rsync subversion swig unzip wget xsltproc zlib1g-dev jq             quilt default-jre-headless binutils
 
+      - name: Install Python 2.7 for OpenWrt 19.07
+        run: |
+          set -eux
+          cd /tmp
+          wget -q https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
+          tar xf Python-2.7.18.tgz
+          cd Python-2.7.18
+          ./configure --prefix=/opt/python2 --enable-unicode=ucs4 --disable-shared
+          make -j2
+          sudo make install
+          sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2.7
+          sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2
+          python2 --version
+
       - name: Create swap
         run: |
           set -eux
