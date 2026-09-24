@@ -1,4 +1,4 @@
-name: Build OpenWrt 19.07 - Xiaomi Mi Router 4 - PassWall
+name: Build OpenWrt 19.07 - Xiaomi Mi Router 4 - helloworld SSR Plus+
 
 on:
   workflow_dispatch:
@@ -16,8 +16,9 @@ env:
   REPO_BRANCH: openwrt-19.07
   OPENWRT_DIR: openwrt
   BUILD_JOBS: 4
-  SINGBOX_VERSION: "1.14.1"
-  NAIVEPROXY_VERSION: "v150.0.7871.63-1"
+  HELLOWORLD_REPO: https://github.com/fw876/helloworld.git
+  GOLANG_REPO: https://github.com/openwrt/packages.git
+  GOLANG_BRANCH: openwrt-23.05
 
 jobs:
   build:
@@ -53,12 +54,9 @@ jobs:
         run: |
           set -eux
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential clang ccache ecj fastjar file g++ gawk gettext \
-            git libncurses5-dev libncursesw5-dev libssl-dev python3 \
-            python3-distutils rsync subversion swig unzip wget xsltproc \
-            zlib1g-dev jq quilt default-jre-headless upx-ucl binutils
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang llvm ccache ecj fastjar file g++ gawk gettext             git libncurses5-dev libncursesw5-dev libssl-dev python3             python3-distutils rsync subversion swig unzip wget xsltproc             zlib1g-dev jq quilt default-jre-headless upx-ucl binutils
           sudo apt-get clean
+          clang --version
           ccache --max-size=3G
 
       - name: Install Python 2.7
@@ -76,141 +74,68 @@ jobs:
           sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2
           python2 --version
 
-      - name: Set up Go 1.23
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23.x'
-
-      - name: Prebuild sing-box ${{ env.SINGBOX_VERSION }} (mipsle softfloat)
-        shell: bash
-        run: |
-          set -eux
-          mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
-          git clone --depth 1 --branch "v${SINGBOX_VERSION}" \
-            https://github.com/SagerNet/sing-box.git /tmp/sing-box-src
-          cd /tmp/sing-box-src/cmd/sing-box
-          env CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat \
-            go build -v -trimpath \
-              -ldflags "-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_VERSION}" \
-              -tags "with_quic with_dhcp with_wireguard with_utls with_clash_api"
-          if command -v upx >/dev/null 2>&1; then
-            upx --best --lzma sing-box || true
-          fi
-          cp -a sing-box "${GITHUB_WORKSPACE}/prebuilt/sing-box"
-          ls -lh "${GITHUB_WORKSPACE}/prebuilt/sing-box"
-          file "${GITHUB_WORKSPACE}/prebuilt/sing-box"
-
-      - name: Fetch official naiveproxy mipsel_24kc-static
-        shell: bash
-        run: |
-          set -eux
-          chmod +x "${GITHUB_WORKSPACE}/scripts/fetch-naiveproxy.sh"
-          export NAIVEPROXY_VERSION="${NAIVEPROXY_VERSION}"
-          bash "${GITHUB_WORKSPACE}/scripts/fetch-naiveproxy.sh" "${GITHUB_WORKSPACE}/prebuilt"
-          # strip debug if host strip works on MIPS ELF
-          if command -v mipsel-linux-gnu-strip >/dev/null 2>&1; then
-            mipsel-linux-gnu-strip "${GITHUB_WORKSPACE}/prebuilt/naiveproxy" || true
-          elif command -v strip >/dev/null 2>&1; then
-            strip "${GITHUB_WORKSPACE}/prebuilt/naiveproxy" 2>/dev/null || true
-          fi
-          ls -lh "${GITHUB_WORKSPACE}/prebuilt/naiveproxy"
-
       - name: Cache downloads and ccache
         uses: actions/cache@v4
         with:
           path: |
             ~/.ccache
             openwrt/dl
-          key: openwrt-19.07-mir4-${{ runner.os }}-${{ hashFiles('.config') }}
+          key: openwrt-19.07-mir4-ssrplus-${{ runner.os }}-${{ hashFiles('.config') }}
           restore-keys: |
-            openwrt-19.07-mir4-${{ runner.os }}-
+            openwrt-19.07-mir4-ssrplus-${{ runner.os }}-
 
       - name: Clone OpenWrt 19.07
         shell: bash
         run: |
           set -eux
           rm -rf "${OPENWRT_DIR}"
-          git clone --depth 1 --single-branch --branch "${REPO_BRANCH}" "${REPO_URL}" "${OPENWRT_DIR}"
+          git clone --depth 1 --single-branch --branch "${REPO_BRANCH}"             "${REPO_URL}" "${OPENWRT_DIR}"
 
-      - name: Prepare PassWall feeds
+      - name: Update base OpenWrt feeds
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -eux
+          ./scripts/feeds update -a
+
+      - name: Install helloworld and upgrade Golang
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
         run: |
           set -eux
           bash "${GITHUB_WORKSPACE}/diy-part1.sh"
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
 
-      - name: Apply compatibility patches
+      - name: Install helloworld packages
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
         run: |
           set -eux
-          mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
-          test -f "${GITHUB_WORKSPACE}/prebuilt/sing-box"
-          test -f "${GITHUB_WORKSPACE}/prebuilt/naiveproxy"
-          export PREBUILT_SINGBOX="${GITHUB_WORKSPACE}/prebuilt/sing-box"
-          export PREBUILT_NAIVEPROXY="${GITHUB_WORKSPACE}/prebuilt/naiveproxy"
-          export SINGBOX_VERSION="${SINGBOX_VERSION}"
-          export NAIVEPROXY_VERSION="${NAIVEPROXY_VERSION}"
-          # rust prebuilts intentionally absent
-          unset PREBUILT_SSLOCAL PREBUILT_SHADOW_TLS || true
-          bash "${GITHUB_WORKSPACE}/diy-part2.sh"
-          ./scripts/feeds install -a || true
+          ./scripts/feeds install -a -f
+          ./scripts/feeds install -a -f -p packages
+          # Method 1 keeps helloworld directly under package/helloworld.
+          # Force-installing all helloworld packages is unnecessary because
+          # .config selects only the SSR Plus+ stack.
+          make defconfig
 
-      - name: Install and validate configuration
+      - name: Apply MIR4/SSR Plus configuration
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
         run: |
           set -eux
           cp "${GITHUB_WORKSPACE}/.config" .config
-
-          for opt in \
-            CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y \
-            CONFIG_PACKAGE_luci-app-passwall=y \
-            CONFIG_IPV6=y \
-            CONFIG_PACKAGE_xray-core=y \
-            CONFIG_PACKAGE_sing-box=y \
-            CONFIG_PACKAGE_naiveproxy=y \
-            CONFIG_PACKAGE_lyaml=y
-          do
-            key="${opt%%=*}"
-            sed -i "/^${key}=/d; /^# ${key} is not set/d" .config || true
-            echo "${opt}" >> .config
-          done
-
-          # force rust packages off
-          for off in \
-            CONFIG_PACKAGE_shadowsocks-rust-sslocal \
-            CONFIG_PACKAGE_shadowsocks-rust \
-            CONFIG_PACKAGE_shadow-tls
-          do
-            sed -i "/^${off}=/d; /^# ${off} is not set/d" .config || true
-            echo "# ${off} is not set" >> .config
-          done
-
-          sed -i '/CONFIG_PACKAGE_kmod-inet-diag/d; /CONFIG_PACKAGE_kmod-netlink-diag/d' .config || true
-          echo '# CONFIG_PACKAGE_kmod-inet-diag is not set' >> .config
-          echo '# CONFIG_PACKAGE_kmod-netlink-diag is not set' >> .config
-
           make defconfig
 
           grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
-          grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-ssr-plus=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Xray=y$' .config
+          grep -q '^CONFIG_PACKAGE_xray-core=y$' .config
+          grep -q '^CONFIG_PACKAGE_shadowsocksr-libev-ssr-local=y$' .config
 
-          for p in xray-core sing-box naiveproxy; do
-            if [ -f "package/feeds/passwall_packages/${p}/Makefile" ]; then
-              echo "OK package: ${p}"
-            elif [ -f "feeds/passwall_packages/${p}/Makefile" ]; then
-              echo "OK package (feeds): ${p}"
-            else
-              echo "ERROR: ${p} Makefile not found"
-              exit 1
-            fi
-          done
+          test -f "${GITHUB_WORKSPACE}/openwrt/package/helloworld/luci-app-ssr-plus/Makefile"
+          test -f "${GITHUB_WORKSPACE}/openwrt/package/helloworld/xray-core/Makefile"
+          test -f "${GITHUB_WORKSPACE}/openwrt/feeds/packages/lang/golang/golang-package.mk"
 
-          [ -f package/lyaml/Makefile ]
-          echo "Configuration validation passed."
+          echo "helloworld + Golang validation passed."
 
       - name: Download package sources
         working-directory: ${{ env.OPENWRT_DIR }}
@@ -234,18 +159,16 @@ jobs:
           out_dir="${GITHUB_WORKSPACE}/firmware"
           rm -rf "${out_dir}"
           mkdir -p "${out_dir}"
-          find "${target_dir}" -maxdepth 1 -type f \( \
-            -name '*.bin' -o -name '*.img' -o -name '*.tar' \
-            -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json' \
-          \) -exec cp -av {} "${out_dir}/" \;
+          find "${target_dir}" -maxdepth 1 -type f \(             -name '*.bin' -o -name '*.img' -o -name '*.tar'             -o -name '*.manifest' -o -name 'sha256sums' -o -name '*.json'           \) -exec cp -av {} "${out_dir}/" \;
           cp -av .config "${out_dir}/config.final"
           {
             echo "OpenWrt branch: ${REPO_BRANCH}"
             echo "Target: Xiaomi Mi Router 4 / MT7621A"
-            echo "Xray: 26.9.9 official MIPS32LE (binary package)"
-            echo "sing-box: ${SINGBOX_VERSION} prebuilt mipsle softfloat"
-            echo "naiveproxy: ${NAIVEPROXY_VERSION} official static binary package"
-            echo "shadowsocks-rust / shadow-tls: not included (no reliable mipsel CI build)"
+            echo "Proxy stack: fw876/helloworld luci-app-ssr-plus"
+            echo "Golang source: ${GOLANG_REPO} / ${GOLANG_BRANCH}"
+            echo "PassWall: not included"
+            echo "sing-box: not included"
+            echo "Rust/shadowsocks-rust: not included"
             echo "Build run: ${GITHUB_RUN_NUMBER}"
           } > "${out_dir}/BUILD_INFO.txt"
           (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
@@ -255,7 +178,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-19.07-mir4-passwall-${{ github.run_number }}
+          name: openwrt-19.07-mir4-ssrplus-${{ github.run_number }}
           path: firmware/*
           if-no-files-found: error
           retention-days: 30
@@ -273,8 +196,8 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-{0}', github.run_number) }}
-          name: OpenWrt 19.07 MIR4 PassWall Build ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-ssrplus-{0}', github.run_number) }}
+          name: OpenWrt 19.07 MIR4 SSR Plus+ Build ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
           draft: false
           prerelease: false
           generate_release_notes: true
