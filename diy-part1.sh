@@ -1,69 +1,62 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# OpenWrt 19.07 + fw876/helloworld
-# Method 1 from upstream README: clone directly into package/helloworld.
-# OpenWrt <= 21.02 also needs a newer Golang toolchain for Xray.
-
 ROOT_DIR="$(pwd)"
 HELLOWORLD_DIR="${ROOT_DIR}/package/helloworld"
-GO_OVERLAY_DIR="/tmp/openwrt-packages-2305"
-GO_VERSION_BRANCH="openwrt-23.05"
+COMPAT23="/tmp/openwrt-packages-2305"
+MODERN="/tmp/openwrt-packages-modern"
+GOLANG27="/tmp/packages-lang-golang-27"
+KCPTUN="/tmp/openwrt-kcptun"
+LUCI19="/tmp/openwrt-luci-1907"
 
-command -v git >/dev/null 2>&1 || {
-    echo "ERROR: git is required"
-    exit 1
-}
+command -v git >/dev/null 2>&1
 command -v clang >/dev/null 2>&1 || {
-    echo "ERROR: clang is required. Install clang before building helloworld."
+    echo "ERROR: clang is required by fw876/helloworld"
     exit 1
 }
 
-echo "===== Clone fw876/helloworld (Method 1) ====="
 rm -rf "${HELLOWORLD_DIR}"
 git clone --depth=1 https://github.com/fw876/helloworld.git "${HELLOWORLD_DIR}"
 
-echo "===== helloworld revision ====="
-git -C "${HELLOWORLD_DIR}" rev-parse HEAD
-git -C "${HELLOWORLD_DIR}" log -1 --oneline
+rm -rf "${COMPAT23}" "${MODERN}" "${GOLANG27}" "${KCPTUN}" "${LUCI19}"
 
-echo "===== Upgrade Golang toolchain for OpenWrt 19.07 ====="
-rm -rf "${GO_OVERLAY_DIR}"
-git clone --depth=1 --filter=blob:none --sparse \
-    --branch "${GO_VERSION_BRANCH}" \
-    https://github.com/openwrt/packages.git "${GO_OVERLAY_DIR}"
+git clone --depth=1 --branch openwrt-23.05 https://github.com/openwrt/packages.git "${COMPAT23}"
+git clone --depth=1 https://github.com/openwrt/packages.git "${MODERN}"
+git clone --depth=1 --branch 27.x https://github.com/sbwml/packages_lang_golang.git "${GOLANG27}"
+git clone --depth=1 https://github.com/kuoruan/openwrt-kcptun.git "${KCPTUN}"
+git clone --depth=1 --branch openwrt-19.07 https://github.com/openwrt/luci.git "${LUCI19}"
 
-git -C "${GO_OVERLAY_DIR}" sparse-checkout set lang/golang
+feed_line() {
+    local name="$1"
+    local path="$2"
+    grep -q "^src-link ${name} " feeds.conf.default 2>/dev/null || echo "src-link ${name} ${path}" >> feeds.conf.default
+}
 
-# helloworld's Xray/Hysteria Makefiles include:
-#   feeds/packages/lang/golang/golang-package.mk
-# Therefore replace only the Golang toolchain subtree, not the whole packages feed.
-if [ ! -f "${GO_OVERLAY_DIR}/lang/golang/golang-package.mk" ]; then
-    echo "ERROR: Golang package files were not found in ${GO_VERSION_BRANCH}"
-    exit 1
-fi
+feed_line compat23 "${COMPAT23}"
+feed_line modern "${MODERN}"
+feed_line golang27 "${GOLANG27}"
+feed_line kcptun "${KCPTUN}"
+feed_line luci19 "${LUCI19}"
 
-rm -rf "${ROOT_DIR}/feeds/packages/lang/golang"
-mkdir -p "${ROOT_DIR}/feeds/packages/lang"
-cp -a "${GO_OVERLAY_DIR}/lang/golang" "${ROOT_DIR}/feeds/packages/lang/golang"
+./scripts/feeds update compat23 modern golang27 kcptun luci19
 
-echo "===== Golang package source ====="
-grep -E '^(PKG_NAME|PKG_VERSION|GO_VERSION|GO_HASH)' \
-    "${ROOT_DIR}/feeds/packages/lang/golang/golang/Makefile" \
-    "${ROOT_DIR}/feeds/packages/lang/golang/golang-values.mk" 2>/dev/null || true
+./scripts/feeds install -a -f -p golang27
+./scripts/feeds install rust -p compat23
+./scripts/feeds install luarocks lyaml -p modern
+./scripts/feeds install csstidy -p compat23
+./scripts/feeds install kcptun-client kcptun-server -p kcptun
+./scripts/feeds install luci-compat -p luci19 || ./scripts/feeds install luci-compat -p luci
 
-echo "===== Required helloworld packages ====="
-for p in \
-    luci-app-ssr-plus \
-    xray-core \
-    shadowsocksr-libev \
-    shadowsocks-libev \
-    hysteria
-do
-    test -f "${HELLOWORLD_DIR}/${p}/Makefile" || {
-        echo "ERROR: helloworld package missing: ${p}"
-        exit 1
-    }
+for p in coreutils coreutils-base64 jq bind-dig nping unzip xz-utils xz; do
+    ./scripts/feeds install "${p}" -p compat23 || ./scripts/feeds install "${p}" -p modern || true
 done
 
-echo "diy-part1.sh completed."
+./scripts/feeds install luci-app-ssr-plus xray-core hysteria shadowsocksr-libev shadowsocks-libev -p helloworld -f
+
+test -f "${ROOT_DIR}/feeds/golang27/lang/golang/golang-package.mk"
+test -f "${ROOT_DIR}/feeds/compat23/lang/rust/Makefile"
+test -f "${ROOT_DIR}/feeds/compat23/lang/rust/rust-package.mk"
+test -f "${ROOT_DIR}/feeds/modern/lang/lua/lyaml/Makefile"
+test -f "${ROOT_DIR}/feeds/kcptun/Makefile"
+test -f "${HELLOWORLD_DIR}/luci-app-ssr-plus/Makefile"
+test -f "${HELLOWORLD_DIR}/xray-core/Makefile"
