@@ -19,6 +19,7 @@ env:
   SINGBOX_VERSION: "1.14.1"
   SS_RUST_VERSION: "1.21.2"
   SHADOW_TLS_VERSION: "0.1.5"
+  NAIVEPROXY_VERSION: "v150.0.7871.63-1"
   TOOLCHAIN_URL: "https://downloads.openwrt.org/releases/19.07.10/targets/ramips/mt7621/openwrt-toolchain-19.07.10-ramips-mt7621_gcc-7.5.0_musl.Linux-x86_64.tar.xz"
 
 jobs:
@@ -102,9 +103,14 @@ jobs:
           ls -lh "${GITHUB_WORKSPACE}/prebuilt/sing-box"
           file "${GITHUB_WORKSPACE}/prebuilt/sing-box"
 
-      # ------------------------------------------------------------------
-      # Host cargo cross-compile: sslocal + shadow-tls (MT7621A / 19.07)
-      # ------------------------------------------------------------------
+      - name: Fetch official naiveproxy mipsel_24kc-static
+        shell: bash
+        run: |
+          set -eux
+          chmod +x "${GITHUB_WORKSPACE}/scripts/fetch-naiveproxy.sh"
+          export NAIVEPROXY_VERSION="${NAIVEPROXY_VERSION}"
+          bash "${GITHUB_WORKSPACE}/scripts/fetch-naiveproxy.sh" "${GITHUB_WORKSPACE}/prebuilt"
+
       - name: Install Rust (mipsel-unknown-linux-musl)
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -147,7 +153,6 @@ jobs:
           TARGET_CFLAGS = "-O2 -mno-mips16 -mips32r2"
           EOF
 
-          # ---- shadowsocks-rust (sslocal only) ----
           rm -rf /tmp/shadowsocks-rust
           git clone --depth 1 --branch "v${SS_RUST_VERSION}" \
             https://github.com/shadowsocks/shadowsocks-rust.git /tmp/shadowsocks-rust
@@ -162,7 +167,6 @@ jobs:
           panic = "abort"
           TOML
           else
-            # force size-oriented flags if profile already exists
             sed -i 's/opt-level *=.*/opt-level = "z"/' Cargo.toml || true
           fi
 
@@ -174,11 +178,8 @@ jobs:
           "${STRIP}" "target/${TARGET_TRIPLE}/release/sslocal"
           cp -a "target/${TARGET_TRIPLE}/release/sslocal" "${GITHUB_WORKSPACE}/prebuilt/sslocal"
           ls -lh "${GITHUB_WORKSPACE}/prebuilt/sslocal"
-          file "${GITHUB_WORKSPACE}/prebuilt/sslocal"
 
-          # ---- shadow-tls ----
           rm -rf /tmp/shadow-tls
-          # tag may be v0.1.5 or 0.1.5; try common forms
           if ! git clone --depth 1 --branch "v${SHADOW_TLS_VERSION}" \
               https://github.com/ihciah/shadow-tls.git /tmp/shadow-tls 2>/dev/null; then
             git clone --depth 1 --branch "${SHADOW_TLS_VERSION}" \
@@ -199,7 +200,6 @@ jobs:
 
           GF_NI_DISABLE=1 cargo build --release --target "${TARGET_TRIPLE}"
 
-          # binary name is usually shadow-tls
           BIN=""
           for c in shadow-tls shadow_tls; do
             if [ -f "target/${TARGET_TRIPLE}/release/${c}" ]; then
@@ -214,10 +214,6 @@ jobs:
           fi
           "${STRIP}" "${BIN}"
           cp -a "${BIN}" "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
-          ls -lh "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
-          file "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
-
-          echo "Rust prebuilds ready:"
           ls -lh "${GITHUB_WORKSPACE}/prebuilt/"
 
       - name: Cache downloads and ccache
@@ -255,12 +251,15 @@ jobs:
           test -f "${GITHUB_WORKSPACE}/prebuilt/sing-box"
           test -f "${GITHUB_WORKSPACE}/prebuilt/sslocal"
           test -f "${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
+          test -f "${GITHUB_WORKSPACE}/prebuilt/naiveproxy"
           export PREBUILT_SINGBOX="${GITHUB_WORKSPACE}/prebuilt/sing-box"
           export PREBUILT_SSLOCAL="${GITHUB_WORKSPACE}/prebuilt/sslocal"
           export PREBUILT_SHADOW_TLS="${GITHUB_WORKSPACE}/prebuilt/shadow-tls"
+          export PREBUILT_NAIVEPROXY="${GITHUB_WORKSPACE}/prebuilt/naiveproxy"
           export SINGBOX_VERSION="${SINGBOX_VERSION}"
           export SS_RUST_VERSION="${SS_RUST_VERSION}"
           export SHADOW_TLS_VERSION="${SHADOW_TLS_VERSION}"
+          export NAIVEPROXY_VERSION="${NAIVEPROXY_VERSION}"
           bash "${GITHUB_WORKSPACE}/diy-part2.sh"
           ./scripts/feeds install -a || true
 
@@ -279,6 +278,7 @@ jobs:
             CONFIG_PACKAGE_sing-box=y \
             CONFIG_PACKAGE_shadowsocks-rust-sslocal=y \
             CONFIG_PACKAGE_shadow-tls=y \
+            CONFIG_PACKAGE_naiveproxy=y \
             CONFIG_PACKAGE_lyaml=y
           do
             key="${opt%%=*}"
@@ -295,7 +295,7 @@ jobs:
           grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
 
-          for p in xray-core sing-box shadowsocks-rust shadow-tls; do
+          for p in xray-core sing-box shadowsocks-rust shadow-tls naiveproxy; do
             if [ -f "package/feeds/passwall_packages/${p}/Makefile" ]; then
               echo "OK package: ${p}"
             elif [ -f "feeds/passwall_packages/${p}/Makefile" ]; then
@@ -343,7 +343,7 @@ jobs:
             echo "sing-box: ${SINGBOX_VERSION} prebuilt mipsle softfloat"
             echo "shadowsocks-rust sslocal: ${SS_RUST_VERSION} host cargo mipsel"
             echo "shadow-tls: ${SHADOW_TLS_VERSION} host cargo mipsel"
-            echo "NaiveProxy: skipped (Chromium C++, not host-cargo pure Rust)"
+            echo "naiveproxy: ${NAIVEPROXY_VERSION} official openwrt-mipsel_24kc-static"
             echo "Build run: ${GITHUB_RUN_NUMBER}"
           } > "${out_dir}/BUILD_INFO.txt"
           (cd "${out_dir}" && sha256sum * > SHA256SUMS.txt)
