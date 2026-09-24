@@ -137,13 +137,21 @@ if "xiaomi,mir4)" not in s:
 p.write_text(s)
 PY
 
-if ! grep -q 'xiaomi,mir4)' "${UPGRADE_FILE}"; then
-    sed -i '/xiaomi,mir3p)/a\	xiaomi,mir4)' "${UPGRADE_FILE}"
-fi
+python3 "${UPGRADE_FILE}" "${UBOOTENV_FILE}" <<'PY'
+from pathlib import Path
+import sys
+upgrade, env = map(Path, sys.argv[1:])
 
-if ! grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"; then
-    sed -i '/xiaomi,mir3g)/i\xiaomi,mir4)\n\tubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"\n\t;;' "${UBOOTENV_FILE}"
-fi
+s = upgrade.read_text()
+if "xiaomi,mir4)" not in s:
+    s = s.replace("xiaomi,mir3g|\\\n\txiaomi,mir3p)", "xiaomi,mir3g|\\\n\txiaomi,mir3p|\\\n\txiaomi,mir4)", 1)
+upgrade.write_text(s)
+
+s = env.read_text()
+if "xiaomi,mir4)" not in s:
+    s = s.replace("xiaomi,mir3p|\\\n\txiaomi,mir3g)", "xiaomi,mir4|\\\n\txiaomi,mir3p|\\\n\txiaomi,mir3g)", 1)
+env.write_text(s)
+PY
 
 XRAY_MK="${HELLOWORLD_DIR}/xray-core/Makefile"
 sed -i 's/^PKG_VERSION:=26\.5\.9$/PKG_VERSION:=26.9.9/' "${XRAY_MK}"
