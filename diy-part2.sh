@@ -11,10 +11,12 @@ UBOOTENV_FILE="${ROOT_DIR}/package/boot/uboot-envtools/files/ramips"
 
 PASSWALL_MK="${ROOT_DIR}/package/feeds/passwall_luci/luci-app-passwall/Makefile"
 PASSWALL_PACKAGES="${ROOT_DIR}/package/feeds/passwall_packages"
-# Also handle non-symlinked feed tree paths
 PASSWALL_PACKAGES_ALT="${ROOT_DIR}/feeds/passwall_packages"
 GOLANG_DIR="${ROOT_DIR}/feeds/packages/lang/golang"
 KERNEL_NETSUPPORT_MK="${ROOT_DIR}/package/kernel/linux/modules/netsupport.mk"
+
+PREBUILT_SINGBOX="${PREBUILT_SINGBOX:-${GITHUB_WORKSPACE:-}/prebuilt/sing-box}"
+SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.1}"
 
 mkdir -p \
   "$(dirname "${DTS_FILE}")" \
@@ -372,8 +374,7 @@ $(eval $(call BuildPackage,lyaml))
 EOF
 
 # ============================================================================
-# 7. Backport kmod-inet-diag + kmod-netlink-diag package defs (19.07 lacks them)
-# Source: openwrt/openwrt commit efc8aff — KernelPackage only, NO config-4.14 force
+# 7. kmod-inet-diag / kmod-netlink-diag (package defs only)
 # ============================================================================
 if [ -f "${KERNEL_NETSUPPORT_MK}" ]; then
   if ! grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"; then
@@ -425,9 +426,8 @@ EOF
 fi
 
 # ============================================================================
-# 8. PassWall packages: strip impossible deps; remove rust packages
+# 8. Resolve PassWall packages path; drop rust packages
 # ============================================================================
-# Resolve actual passwall_packages path
 PW_PKGS=""
 for d in "${PASSWALL_PACKAGES}" "${PASSWALL_PACKAGES_ALT}"; do
   if [ -d "${d}" ]; then
@@ -445,13 +445,8 @@ fi
 echo "Using PassWall packages at: ${PW_PKGS}"
 
 [ -f "${PW_PKGS}/shadowsocksr-libev/Makefile" ]
-[ -f "${PW_PKGS}/sing-box/Makefile" ]
 [ -f "${PW_PKGS}/hysteria/Makefile" ]
 
-# 8a. Remove packages that require rust/host (unavailable on OpenWrt 19.07)
-# shadowsocks-rust + shadow-tls need modern rust toolchain not in 19.07 feed.
-# They are already disabled in .config; deleting avoids WARNING spam and
-# accidental selection.
 for rust_pkg in shadowsocks-rust shadow-tls; do
   for base in "${PW_PKGS}" "${PASSWALL_PACKAGES}" "${PASSWALL_PACKAGES_ALT}" \
               "${ROOT_DIR}/package/feeds/passwall_packages" \
@@ -461,15 +456,6 @@ for rust_pkg in shadowsocks-rust shadow-tls; do
       rm -rf "${base}/${rust_pkg}"
     fi
   done
-done
-
-# 8b. Strip kmod-inet-diag / kmod-netlink-diag hard deps from all Makefiles
-# (packages now exist via netsupport.mk, but optional for MIR4 build)
-find "${PW_PKGS}" -name Makefile -print0 2>/dev/null | while IFS= read -r -d '' mk; do
-  sed -i \
-    -e 's/+kmod-inet-diag//g' \
-    -e 's/+kmod-netlink-diag//g' \
-    "${mk}" || true
 done
 
 if [ -f "${PASSWALL_MK}" ]; then
@@ -486,7 +472,7 @@ if [ -f "${PASSWALL_MK}" ]; then
 fi
 
 # ============================================================================
-# 9. Go 26.x host toolchain for sing-box
+# 9. Go 26.x for packages that still compile from source (e.g. hysteria)
 # ============================================================================
 rm -rf "${GOLANG_DIR}"
 if ! git clone --depth 1 --single-branch --branch 26.x \
@@ -548,10 +534,70 @@ $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 11. Sanity checks
+# 11. sing-box 1.14.1 prebuilt binary (mipsle softfloat from Actions host)
+# ============================================================================
+if [ ! -f "${PREBUILT_SINGBOX}" ]; then
+  echo "ERROR: prebuilt sing-box not found at ${PREBUILT_SINGBOX}"
+  echo "Workflow must run 'Prebuild sing-box' before diy-part2."
+  exit 1
+fi
+
+SINGBOX_DIR="${PW_PKGS}/sing-box"
+rm -rf "${SINGBOX_DIR}"
+mkdir -p "${SINGBOX_DIR}/files"
+cp -a "${PREBUILT_SINGBOX}" "${SINGBOX_DIR}/files/sing-box"
+chmod +x "${SINGBOX_DIR}/files/sing-box"
+
+cat > "${SINGBOX_DIR}/Makefile" <<EOF
+include \$(TOPDIR)/rules.mk
+
+PKG_NAME:=sing-box
+PKG_VERSION:=${SINGBOX_VERSION}
+PKG_RELEASE:=1
+
+PKG_LICENSE:=GPL-3.0-or-later
+PKGARCH:=mipsel_24kc
+
+include \$(INCLUDE_DIR)/package.mk
+
+define Package/sing-box
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=sing-box (prebuilt mipsle softfloat)
+  URL:=https://sing-box.sagernet.org
+  DEPENDS:=+ca-bundle
+endef
+
+define Package/sing-box/description
+  sing-box ${SINGBOX_VERSION} prebuilt for MT7621A / OpenWrt 19.07
+  (GOARCH=mipsle GOMIPS=softfloat, host Go 1.23+).
+endef
+
+define Build/Prepare
+	mkdir -p \$(PKG_BUILD_DIR)
+	cp -a ./files/sing-box \$(PKG_BUILD_DIR)/sing-box
+endef
+
+define Build/Configure
+endef
+
+define Build/Compile
+endef
+
+define Package/sing-box/install
+	\$(INSTALL_DIR) \$(1)/usr/bin
+	\$(INSTALL_BIN) \$(PKG_BUILD_DIR)/sing-box \$(1)/usr/bin/sing-box
+endef
+
+\$(eval \$(call BuildPackage,sing-box))
+EOF
+
+# ============================================================================
+# 12. Sanity checks
 # ============================================================================
 [ -f "${PASSWALL_MK}" ]
-[ -f "${PW_PKGS}/sing-box/Makefile" ]
+[ -f "${SINGBOX_DIR}/Makefile" ]
+[ -f "${SINGBOX_DIR}/files/sing-box" ]
 [ -f "${PW_PKGS}/hysteria/Makefile" ]
 [ -f "${PW_PKGS}/shadowsocksr-libev/Makefile" ]
 [ ! -d "${PW_PKGS}/shadowsocks-rust" ]
@@ -562,15 +608,17 @@ grep -q 'define Device/xiaomi_mir4' "${IMAGE_MK}"
 grep -q 'xiaomi,mir4)' "${NETWORK_FILE}"
 grep -q 'luarocks make --pack-binary-rock' "${LYAML_DIR}/Makefile"
 grep -q 'PKG_VERSION:=26.9.9' "${XRAY_DIR}/Makefile"
+grep -q "PKG_VERSION:=${SINGBOX_VERSION}" "${SINGBOX_DIR}/Makefile"
 grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"
 grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"
 
 echo "============================================================"
 echo "MIR4 / OpenWrt 19.07 / PassWall compatibility patch completed"
+echo "Target: Xiaomi Mi Router 4 (MT7621A)"
 echo "PassWall: main 26.x"
 echo "Xray: 26.9.9 official MIPS32LE binary"
-echo "sing-box: diag kmod deps stripped; packages exist via netsupport.mk"
+echo "sing-box: ${SINGBOX_VERSION} prebuilt mipsle softfloat"
 echo "SSR: upstream"
-echo "shadowsocks-rust / shadow-tls: REMOVED (need rust/host, not on 19.07)"
-echo "kmod-inet-diag / kmod-netlink-diag: package defs added"
+echo "shadowsocks-rust / shadow-tls: REMOVED (need rust/host)"
+echo "kmod-inet-diag / kmod-netlink-diag: package defs present"
 echo "============================================================"
