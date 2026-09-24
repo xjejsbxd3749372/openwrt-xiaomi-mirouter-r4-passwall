@@ -355,7 +355,14 @@ define Build/Compile
 	CFLAGS="$(TARGET_CFLAGS) $(FPIC)" \
 	LDFLAGS="$(TARGET_LDFLAGS)" \
 	CC="$(TARGET_CC)" LD="$(TARGET_CC)" \
-	luarocks make --pack-binary /tmp/lyaml-rockspec
+	luarocks make --pack-binary-rock lyaml-$(PKG_VERSION)-1.rockspec \
+	LUA_LIBDIR=$(STAGING_DIR)/usr/lib/lua \
+	YAML_DIR=$(STAGING_DIR)/usr \
+	LUA_INCDIR=$(STAGING_DIR)/usr/include \
+	LUA_PKGNAME=lua5.1 \
+	CFLAGS="$(TARGET_CFLAGS) $(FPIC)" \
+	LDFLAGS="$(TARGET_LDFLAGS)" \
+	CC="$(TARGET_CC)" LD="$(TARGET_CC)"
 endef
 
 define Package/lyaml/install
