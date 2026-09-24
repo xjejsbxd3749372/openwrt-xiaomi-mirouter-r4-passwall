@@ -249,7 +249,7 @@ if anchor not in s:
     s = s.replace(alt_anchor, anchor, 1)
 
 block = '''\txiaomi,mir4)
-\t\tucidef_add_switch "switch0" \
+\t\tucidef_add_switch "switch0" \\
 \t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
 \t\t;;
 '''
@@ -263,7 +263,6 @@ s = re.sub(r'\txiaomi,mir3g\|\\\n\txiaomi,mir3p\|\\\n\txiaomi,mir4\)\n\t\tlan_ma
 p.write_text(s)
 PY
 
-# ============================================================================
 # ============================================================================
 # 4. NAND upgrade path
 # OpenWrt 19.07 uses a single case block; add MIR4 to the existing Xiaomi
@@ -319,7 +318,8 @@ PY
 grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
 grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
 
-# 6. Real lyaml package
+# ============================================================================
+# 6. Real lyaml package (fixed luarocks command for OpenWrt 19.07)
 # ============================================================================
 LYAML_DIR="${ROOT_DIR}/package/lyaml"
 mkdir -p "${LYAML_DIR}"
@@ -375,26 +375,27 @@ $(eval $(call BuildPackage,lyaml))
 EOF
 
 # ============================================================================
-# 7. Keep current PassWall SSR / sing-box / hysteria recipes
+# 7. Keep current PassWall SSR / sing-box / hysteria recipes from upstream
 # ============================================================================
-# The current PassWall packages main branch is authoritative here.  Do not
+# The current PassWall packages main branch is authoritative.  Do not
 # overwrite SSR or sing-box with an older local recipe.
 [ -f "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile" ]
 [ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
 [ -f "${PASSWALL_PACKAGES}/hysteria/Makefile" ]
 
 # ============================================================================
-# 8. Modern Go host toolchain required by sing-box 1.14.x
+# 8. Modern Go host toolchain required by sing-box 1.14.x (single clone only)
 # ============================================================================
-
 rm -rf "${GOLANG_DIR}"
-git clone --depth 1 --single-branch --branch 26.x \
-  https://github.com/sbwml/packages_lang_golang.git "${GOLANG_DIR}"
+if ! git clone --depth 1 --single-branch --branch 26.x \
+  https://github.com/sbwml/packages_lang_golang.git "${GOLANG_DIR}"; then
+  echo "ERROR: failed to clone sbwml/packages_lang_golang branch 26.x"
+  exit 1
+fi
 
 # ============================================================================
-# 9. Xray 26.9.9 official upstream MIPS32LE binary
+# 9. Xray 26.9.9 official upstream MIPS32LE binary (no Go source build)
 # ============================================================================
-
 XRAY_DIR="${PASSWALL_PACKAGES}/xray-core"
 rm -rf "${XRAY_DIR}"
 mkdir -p "${XRAY_DIR}"
@@ -447,7 +448,6 @@ EOF
 # ============================================================================
 # 10. OpenWrt 19.07 / Linux 4.14: backport the missing diag kmod package defs
 # ============================================================================
-
 if ! grep -q "KernelPackage/netlink-diag" "${KERNEL_NETSUPPORT_MK}"; then
 cat >> "${KERNEL_NETSUPPORT_MK}" <<'EOF'
 
@@ -468,16 +468,16 @@ $(eval $(call KernelPackage,netlink-diag))
 define KernelPackage/inet-diag
   SUBMENU:=$(NETWORK_SUPPORT_MENU)
   TITLE:=INET diag support for ss utility
-  KCONFIG:= \
-    CONFIG_INET_DIAG \
-    CONFIG_INET_TCP_DIAG \
-    CONFIG_INET_UDP_DIAG \
-    CONFIG_INET_RAW_DIAG \
+  KCONFIG:= \\
+    CONFIG_INET_DIAG \\
+    CONFIG_INET_TCP_DIAG \\
+    CONFIG_INET_UDP_DIAG \\
+    CONFIG_INET_RAW_DIAG \\
     CONFIG_INET_DIAG_DESTROY=n
-  FILES:= \
-    $(LINUX_DIR)/net/ipv4/inet_diag.ko \
-    $(LINUX_DIR)/net/ipv4/tcp_diag.ko \
-    $(LINUX_DIR)/net/ipv4/udp_diag.ko \
+  FILES:= \\
+    $(LINUX_DIR)/net/ipv4/inet_diag.ko \\
+    $(LINUX_DIR)/net/ipv4/tcp_diag.ko \\
+    $(LINUX_DIR)/net/ipv4/udp_diag.ko \\
     $(LINUX_DIR)/net/ipv4/raw_diag.ko
   AUTOLOAD:=$(call AutoLoad,31,inet_diag tcp_diag udp_diag raw_diag)
 endef
@@ -490,8 +490,8 @@ $(eval $(call KernelPackage,inet-diag))
 EOF
 fi
 
-# Linux 4.14 already contains these options; the source archive confirms they
-# were simply disabled in the generic config.  Build them as modules.
+# Linux 4.14 already contains these options; they were simply disabled in the
+# generic config. Build them as modules.
 python3 - "${ROOT_DIR}/target/linux/generic/config-4.14" <<'PY'
 from pathlib import Path
 import sys
@@ -507,63 +507,9 @@ for old,new in {
     s=s.replace(old,new)
 p.write_text(s)
 PY
-# 8. Go toolchain + Xray 26.6.1
-# ============================================================================
-rm -rf "${GOLANG_DIR}"
-git clone --depth 1 --single-branch --branch 26.x https://github.com/sbwml/packages_lang_golang.git "${GOLANG_DIR}"
-
-XRAY_DIR="${PASSWALL_PACKAGES}/xray-core"
-rm -rf "${XRAY_DIR}"
-mkdir -p "${XRAY_DIR}"
-
-cat > "${XRAY_DIR}/Makefile" <<'EOF'
-include $(TOPDIR)/rules.mk
-
-PKG_NAME:=xray-core
-PKG_VERSION:=26.6.1
-PKG_RELEASE:=1
-
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/XTLS/Xray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=efe463f8e35c4e6e93a6e8d51b27bae0cd4904b9820740c3af01733efb566fee
-PKG_BUILD_DIR:=$(BUILD_DIR)/Xray-core-$(PKG_VERSION)
-
-PKG_LICENSE:=MPL-2.0
-PKG_LICENSE_FILES:=LICENSE
-PKG_BUILD_DEPENDS:=golang/host
-PKG_BUILD_PARALLEL:=1
-PKG_USE_MIPS16:=0
-PKG_BUILD_FLAGS:=no-mips16
-
-GO_PKG:=github.com/xtls/xray-core
-GO_PKG_BUILD_PKG:=$(GO_PKG)/main
-GO_PKG_LDFLAGS:=-s -w
-GO_PKG_LDFLAGS_X:= \
-	$(GO_PKG)/core.build=OpenWrt \
-	$(GO_PKG)/core.version=$(PKG_VERSION)
-
-include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
-
-define Package/xray-core
-  SECTION:=net
-  CATEGORY:=Network
-  TITLE:=Xray-core
-  URL:=https://xtls.github.io
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle
-endef
-
-define Package/xray-core/install
-	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/main $(1)/usr/bin/xray
-endef
-
-$(eval $(call BuildPackage,xray-core))
-EOF
 
 # ============================================================================
-# 11. Sanity checks
+# 11. Sanity checks (must match what was actually written above)
 # ============================================================================
 [ -f "${PASSWALL_MK}" ]
 [ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
@@ -578,17 +524,25 @@ grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
 grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
 grep -q 'luarocks make --pack-binary-rock' "${LYAML_DIR}/Makefile"
 grep -q 'PKG_VERSION:=26.9.9' "${XRAY_DIR}/Makefile"
-grep -q 'PKG_VERSION:=1.14.1' "${PASSWALL_PACKAGES}/sing-box/Makefile"
-grep -q 'PKG_VERSION:=2.5.6' "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile"
+grep -q 'PKG_HASH:=e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2' "${XRAY_DIR}/Makefile"
 grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"
 grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"
 grep -q 'CONFIG_INET_DIAG=m' "${ROOT_DIR}/target/linux/generic/config-4.14"
 grep -q 'CONFIG_NETLINK_DIAG=m' "${ROOT_DIR}/target/linux/generic/config-4.14"
 
+# Optional soft checks for upstream package versions (do not fail the job if
+# PassWall upstream bumped them slightly).
+if ! grep -q 'PKG_VERSION:=1.14' "${PASSWALL_PACKAGES}/sing-box/Makefile"; then
+  echo "WARNING: sing-box PKG_VERSION is not 1.14.x (check PassWall upstream)"
+fi
+if ! grep -q 'PKG_VERSION:=2.5.6' "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile"; then
+  echo "WARNING: shadowsocksr-libev PKG_VERSION is not 2.5.6 (check PassWall upstream)"
+fi
+
 echo "============================================================"
 echo "MIR4 / OpenWrt 19.07 / PassWall compatibility patch completed"
 echo "PassWall: main 26.x"
 echo "Xray: 26.9.9 official MIPS32LE binary"
-echo "sing-box: 1.14.1 current PassWall package"
-echo "SSR: 2.5.6 current PassWall package"
+echo "sing-box: current PassWall package (expect 1.14.x)"
+echo "SSR: current PassWall package (expect 2.5.6)"
 echo "============================================================"
