@@ -16,15 +16,15 @@ command -v clang >/dev/null 2>&1 || {
 }
 
 rm -rf "${HELLOWORLD_DIR}"
-git clone --depth=1 https://github.com/fw876/helloworld.git "${HELLOWORLD_DIR}"
+git clone https://github.com/fw876/helloworld.git "${HELLOWORLD_DIR}"
 
 rm -rf "${COMPAT23}" "${MODERN}" "${GOLANG27}" "${KCPTUN}" "${LUCI19}"
 
-git clone --depth=1 --branch openwrt-23.05 https://github.com/openwrt/packages.git "${COMPAT23}"
-git clone --depth=1 https://github.com/openwrt/packages.git "${MODERN}"
-git clone --depth=1 --branch 27.x https://github.com/sbwml/packages_lang_golang.git "${GOLANG27}"
-git clone --depth=1 https://github.com/kuoruan/openwrt-kcptun.git "${KCPTUN}"
-git clone --depth=1 --branch openwrt-19.07 https://github.com/openwrt/luci.git "${LUCI19}"
+git clone --branch openwrt-23.05 https://github.com/openwrt/packages.git "${COMPAT23}"
+git clone --branch openwrt-19.07 https://github.com/openwrt/packages.git "${MODERN}"
+git clone --branch 27.x https://github.com/sbwml/packages_lang_golang.git "${GOLANG27}"
+git clone https://github.com/kuoruan/openwrt-kcptun.git "${KCPTUN}"
+git clone --branch openwrt-19.07 https://github.com/openwrt/luci.git "${LUCI19}"
 
 feed_line() {
     local name="$1"
@@ -61,3 +61,4 @@ test -f "${ROOT_DIR}/feeds/modern/lyaml/Makefile"
 test -f "${ROOT_DIR}/feeds/kcptun/kcptun-client/Makefile"
 test -f "${HELLOWORLD_DIR}/luci-app-ssr-plus/Makefile"
 test -f "${HELLOWORLD_DIR}/xray-core/Makefile"
+
