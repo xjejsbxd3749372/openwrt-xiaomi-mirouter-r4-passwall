@@ -3,6 +3,8 @@ name: Build OpenWrt 19.07 MIR4 helloworld SSR Plus+
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
       - 'build-*'
