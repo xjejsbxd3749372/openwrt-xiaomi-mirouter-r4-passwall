@@ -40,7 +40,7 @@ feed_line luci19 "${LUCI19}"
 
 ./scripts/feeds update compat23 modern golang27 kcptun luci19
 
-./scripts/feeds install -a -f -p golang27
+./scripts/feeds install golang -p golang27 -f
 ./scripts/feeds install rust -p compat23
 ./scripts/feeds install luarocks lyaml -p modern
 ./scripts/feeds install csstidy -p compat23
