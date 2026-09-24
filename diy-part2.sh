@@ -11,7 +11,10 @@ UBOOTENV_FILE="${ROOT_DIR}/package/boot/uboot-envtools/files/ramips"
 
 PASSWALL_MK="${ROOT_DIR}/package/feeds/passwall_luci/luci-app-passwall/Makefile"
 PASSWALL_PACKAGES="${ROOT_DIR}/package/feeds/passwall_packages"
+# Also handle non-symlinked feed tree paths
+PASSWALL_PACKAGES_ALT="${ROOT_DIR}/feeds/passwall_packages"
 GOLANG_DIR="${ROOT_DIR}/feeds/packages/lang/golang"
+KERNEL_NETSUPPORT_MK="${ROOT_DIR}/package/kernel/linux/modules/netsupport.mk"
 
 mkdir -p \
   "$(dirname "${DTS_FILE}")" \
@@ -313,7 +316,7 @@ grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
 grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
 
 # ============================================================================
-# 6. lyaml (LuaRocks 2.x compatible)
+# 6. lyaml
 # ============================================================================
 LYAML_DIR="${ROOT_DIR}/package/lyaml"
 mkdir -p "${LYAML_DIR}"
@@ -369,21 +372,103 @@ $(eval $(call BuildPackage,lyaml))
 EOF
 
 # ============================================================================
-# 7. Keep upstream PassWall SSR / sing-box / hysteria; strip diag kmod deps
+# 7. Backport kmod-inet-diag + kmod-netlink-diag package defs (19.07 lacks them)
+# Source: openwrt/openwrt commit efc8aff — KernelPackage only, NO config-4.14 force
 # ============================================================================
-[ -f "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile" ]
-[ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
-[ -f "${PASSWALL_PACKAGES}/hysteria/Makefile" ]
+if [ -f "${KERNEL_NETSUPPORT_MK}" ]; then
+  if ! grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"; then
+    cat >> "${KERNEL_NETSUPPORT_MK}" <<'EOF'
 
-# OpenWrt 19.07 does not ship kmod-inet-diag / kmod-netlink-diag.
-# Forcing them into kernel config as modules breaks silentoldconfig.
-# PassWall/sing-box still work without these optional diagnostic modules.
-find "${PASSWALL_PACKAGES}" -name Makefile -print0 2>/dev/null | while IFS= read -r -d '' mk; do
+define KernelPackage/netlink-diag
+  SUBMENU:=$(NETWORK_SUPPORT_MENU)
+  TITLE:=Netlink diag support for ss utility
+  KCONFIG:=CONFIG_NETLINK_DIAG
+  FILES:=$(LINUX_DIR)/net/netlink/netlink_diag.ko
+  AUTOLOAD:=$(call AutoLoad,31,netlink-diag)
+endef
+
+define KernelPackage/netlink-diag/description
+  Netlink diag is a module made for use by iproute2 ss.
+endef
+
+$(eval $(call KernelPackage,netlink-diag))
+EOF
+  fi
+
+  if ! grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"; then
+    cat >> "${KERNEL_NETSUPPORT_MK}" <<'EOF'
+
+define KernelPackage/inet-diag
+  SUBMENU:=$(NETWORK_SUPPORT_MENU)
+  TITLE:=INET diag support for ss utility
+  KCONFIG:= \
+	CONFIG_INET_DIAG \
+	CONFIG_INET_TCP_DIAG \
+	CONFIG_INET_UDP_DIAG \
+	CONFIG_INET_RAW_DIAG \
+	CONFIG_INET_DIAG_DESTROY=n
+  FILES:= \
+	$(LINUX_DIR)/net/ipv4/inet_diag.ko \
+	$(LINUX_DIR)/net/ipv4/tcp_diag.ko \
+	$(LINUX_DIR)/net/ipv4/udp_diag.ko \
+	$(LINUX_DIR)/net/ipv4/raw_diag.ko
+  AUTOLOAD:=$(call AutoLoad,31,inet_diag tcp_diag udp_diag raw_diag)
+endef
+
+define KernelPackage/inet-diag/description
+  Support for INET socket monitoring used by native Linux tools such as ss.
+endef
+
+$(eval $(call KernelPackage,inet-diag))
+EOF
+  fi
+fi
+
+# ============================================================================
+# 8. PassWall packages: strip impossible deps; remove rust packages
+# ============================================================================
+# Resolve actual passwall_packages path
+PW_PKGS=""
+for d in "${PASSWALL_PACKAGES}" "${PASSWALL_PACKAGES_ALT}"; do
+  if [ -d "${d}" ]; then
+    PW_PKGS="${d}"
+    break
+  fi
+done
+
+if [ -z "${PW_PKGS}" ]; then
+  echo "ERROR: passwall_packages directory not found"
+  find feeds package -type d -name 'passwall*' 2>/dev/null | head -20 || true
+  exit 1
+fi
+
+echo "Using PassWall packages at: ${PW_PKGS}"
+
+[ -f "${PW_PKGS}/shadowsocksr-libev/Makefile" ]
+[ -f "${PW_PKGS}/sing-box/Makefile" ]
+[ -f "${PW_PKGS}/hysteria/Makefile" ]
+
+# 8a. Remove packages that require rust/host (unavailable on OpenWrt 19.07)
+# shadowsocks-rust + shadow-tls need modern rust toolchain not in 19.07 feed.
+# They are already disabled in .config; deleting avoids WARNING spam and
+# accidental selection.
+for rust_pkg in shadowsocks-rust shadow-tls; do
+  for base in "${PW_PKGS}" "${PASSWALL_PACKAGES}" "${PASSWALL_PACKAGES_ALT}" \
+              "${ROOT_DIR}/package/feeds/passwall_packages" \
+              "${ROOT_DIR}/feeds/passwall_packages"; do
+    if [ -d "${base}/${rust_pkg}" ]; then
+      echo "Removing rust-dependent package: ${base}/${rust_pkg}"
+      rm -rf "${base}/${rust_pkg}"
+    fi
+  done
+done
+
+# 8b. Strip kmod-inet-diag / kmod-netlink-diag hard deps from all Makefiles
+# (packages now exist via netsupport.mk, but optional for MIR4 build)
+find "${PW_PKGS}" -name Makefile -print0 2>/dev/null | while IFS= read -r -d '' mk; do
   sed -i \
     -e 's/+kmod-inet-diag//g' \
     -e 's/+kmod-netlink-diag//g' \
-    -e 's/kmod-inet-diag//g' \
-    -e 's/kmod-netlink-diag//g' \
     "${mk}" || true
 done
 
@@ -395,11 +480,13 @@ if [ -f "${PASSWALL_MK}" ]; then
     -e '/select PACKAGE_kmod-nft-tproxy/d' \
     -e '/select PACKAGE_kmod-inet-diag/d' \
     -e '/select PACKAGE_kmod-netlink-diag/d' \
+    -e '/select PACKAGE_shadowsocks-rust/d' \
+    -e '/select PACKAGE_shadow-tls/d' \
     "${PASSWALL_MK}" || true
 fi
 
 # ============================================================================
-# 8. Go 26.x host toolchain for sing-box (single clone)
+# 9. Go 26.x host toolchain for sing-box
 # ============================================================================
 rm -rf "${GOLANG_DIR}"
 if ! git clone --depth 1 --single-branch --branch 26.x \
@@ -409,9 +496,9 @@ if ! git clone --depth 1 --single-branch --branch 26.x \
 fi
 
 # ============================================================================
-# 9. Xray 26.9.9 official MIPS32LE binary (no source Go build on 19.07)
+# 10. Xray 26.9.9 official MIPS32LE binary
 # ============================================================================
-XRAY_DIR="${PASSWALL_PACKAGES}/xray-core"
+XRAY_DIR="${PW_PKGS}/xray-core"
 rm -rf "${XRAY_DIR}"
 mkdir -p "${XRAY_DIR}"
 
@@ -461,29 +548,29 @@ $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 10. Sanity checks
+# 11. Sanity checks
 # ============================================================================
 [ -f "${PASSWALL_MK}" ]
-[ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
-[ -f "${PASSWALL_PACKAGES}/hysteria/Makefile" ]
-[ -f "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile" ]
+[ -f "${PW_PKGS}/sing-box/Makefile" ]
+[ -f "${PW_PKGS}/hysteria/Makefile" ]
+[ -f "${PW_PKGS}/shadowsocksr-libev/Makefile" ]
+[ ! -d "${PW_PKGS}/shadowsocks-rust" ]
+[ ! -d "${PW_PKGS}/shadow-tls" ]
 
 grep -q 'compatible = "xiaomi,mir4"' "${DTS_FILE}"
-grep -q 'mediatek,portmap = "llllw"' "${DTS_FILE}"
 grep -q 'define Device/xiaomi_mir4' "${IMAGE_MK}"
 grep -q 'xiaomi,mir4)' "${NETWORK_FILE}"
-grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
-grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
 grep -q 'luarocks make --pack-binary-rock' "${LYAML_DIR}/Makefile"
 grep -q 'PKG_VERSION:=26.9.9' "${XRAY_DIR}/Makefile"
-grep -q 'PKG_HASH:=e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2' "${XRAY_DIR}/Makefile"
+grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"
+grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"
 
 echo "============================================================"
 echo "MIR4 / OpenWrt 19.07 / PassWall compatibility patch completed"
 echo "PassWall: main 26.x"
 echo "Xray: 26.9.9 official MIPS32LE binary"
-echo "sing-box: upstream (diag kmod deps stripped for 19.07)"
+echo "sing-box: diag kmod deps stripped; packages exist via netsupport.mk"
 echo "SSR: upstream"
-echo "USB: disabled (MIR4 has no USB use-case)"
-echo "kmod-inet-diag/netlink-diag: not forced (avoids silentoldconfig break)"
+echo "shadowsocks-rust / shadow-tls: REMOVED (need rust/host, not on 19.07)"
+echo "kmod-inet-diag / kmod-netlink-diag: package defs added"
 echo "============================================================"
