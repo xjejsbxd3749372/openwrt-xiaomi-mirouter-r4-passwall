@@ -12,7 +12,6 @@ UBOOTENV_FILE="${ROOT_DIR}/package/boot/uboot-envtools/files/ramips"
 PASSWALL_MK="${ROOT_DIR}/package/feeds/passwall_luci/luci-app-passwall/Makefile"
 PASSWALL_PACKAGES="${ROOT_DIR}/package/feeds/passwall_packages"
 GOLANG_DIR="${ROOT_DIR}/feeds/packages/lang/golang"
-KERNEL_NETSUPPORT_MK="${ROOT_DIR}/package/kernel/linux/modules/netsupport.mk"
 
 mkdir -p \
   "$(dirname "${DTS_FILE}")" \
@@ -237,12 +236,10 @@ import re, sys
 p = Path(sys.argv[1])
 s = p.read_text()
 
-# Remove any earlier mir4 block if present
 s = re.sub(r'\txiaomi,mir4\)\n\t\tucidef_add_switch "switch0" \\\n(?:\t\t\t".*?"\s*)+\n\t\t;;\n', '', s)
 
 anchor = '\txiaomi,mir3p)\n\t\tucidef_add_switch "switch0" \\\n\t\t\t"1:lan:3" "2:lan:2" "3:lan:1" "4:wan" "6@eth0"\n\t\t;;\n'
 if anchor not in s:
-    # OpenWrt 19.07 commonly has xiaomi,mir3g first and mir3p second
     alt_anchor = '\txiaomi,mir3g)\n\t\tucidef_add_switch "switch0" \\\n\t\t\t"1:lan:3" "2:lan:2" "3:lan:1" "4:wan" "6@eth0"\n\t\t;;\n'
     if alt_anchor not in s:
         raise SystemExit('ERROR: xiaomi,mir3p network anchor not found')
@@ -255,7 +252,6 @@ block = '''\txiaomi,mir4)
 '''
 s = s.replace(anchor, anchor + block, 1)
 
-# Match source project's MAC policy: LAN MAC from Factory+0xe006
 s = re.sub(r'\txiaomi,mir3g\|\\\n\txiaomi,mir3p\|\\\n\txiaomi,mir4\)\n\t\tlan_mac=.*?\n\t\t;;\n',
            '\txiaomi,mir3g|\\\n\txiaomi,mir3p|\\\n\txiaomi,mir4)\n\t\tlan_mac=$(mtd_get_mac_binary Factory 0xe006)\n\t\t;;\n',
            s, count=1)
@@ -265,8 +261,6 @@ PY
 
 # ============================================================================
 # 4. NAND upgrade path
-# OpenWrt 19.07 uses a single case block; add MIR4 to the existing Xiaomi
-# NAND boards without assuming a particular board ordering.
 # ============================================================================
 python3 - "${PLATFORM_FILE}" <<'PY'
 from pathlib import Path
@@ -319,7 +313,7 @@ grep -q 'xiaomi,mir4)' "${PLATFORM_FILE}"
 grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
 
 # ============================================================================
-# 6. Real lyaml package (fixed luarocks command for OpenWrt 19.07)
+# 6. lyaml (LuaRocks 2.x compatible)
 # ============================================================================
 LYAML_DIR="${ROOT_DIR}/package/lyaml"
 mkdir -p "${LYAML_DIR}"
@@ -375,16 +369,37 @@ $(eval $(call BuildPackage,lyaml))
 EOF
 
 # ============================================================================
-# 7. Keep current PassWall SSR / sing-box / hysteria recipes from upstream
+# 7. Keep upstream PassWall SSR / sing-box / hysteria; strip diag kmod deps
 # ============================================================================
-# The current PassWall packages main branch is authoritative.  Do not
-# overwrite SSR or sing-box with an older local recipe.
 [ -f "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile" ]
 [ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
 [ -f "${PASSWALL_PACKAGES}/hysteria/Makefile" ]
 
+# OpenWrt 19.07 does not ship kmod-inet-diag / kmod-netlink-diag.
+# Forcing them into kernel config as modules breaks silentoldconfig.
+# PassWall/sing-box still work without these optional diagnostic modules.
+find "${PASSWALL_PACKAGES}" -name Makefile -print0 2>/dev/null | while IFS= read -r -d '' mk; do
+  sed -i \
+    -e 's/+kmod-inet-diag//g' \
+    -e 's/+kmod-netlink-diag//g' \
+    -e 's/kmod-inet-diag//g' \
+    -e 's/kmod-netlink-diag//g' \
+    "${mk}" || true
+done
+
+if [ -f "${PASSWALL_MK}" ]; then
+  sed -i \
+    -e '/select PACKAGE_iptables-zz-legacy/d' \
+    -e '/select PACKAGE_iptables-mod-socket/d' \
+    -e '/select PACKAGE_kmod-nft-socket/d' \
+    -e '/select PACKAGE_kmod-nft-tproxy/d' \
+    -e '/select PACKAGE_kmod-inet-diag/d' \
+    -e '/select PACKAGE_kmod-netlink-diag/d' \
+    "${PASSWALL_MK}" || true
+fi
+
 # ============================================================================
-# 8. Modern Go host toolchain required by sing-box 1.14.x (single clone only)
+# 8. Go 26.x host toolchain for sing-box (single clone)
 # ============================================================================
 rm -rf "${GOLANG_DIR}"
 if ! git clone --depth 1 --single-branch --branch 26.x \
@@ -394,7 +409,7 @@ if ! git clone --depth 1 --single-branch --branch 26.x \
 fi
 
 # ============================================================================
-# 9. Xray 26.9.9 official upstream MIPS32LE binary (no Go source build)
+# 9. Xray 26.9.9 official MIPS32LE binary (no source Go build on 19.07)
 # ============================================================================
 XRAY_DIR="${PASSWALL_PACKAGES}/xray-core"
 rm -rf "${XRAY_DIR}"
@@ -446,70 +461,7 @@ $(eval $(call BuildPackage,xray-core))
 EOF
 
 # ============================================================================
-# 10. OpenWrt 19.07 / Linux 4.14: backport the missing diag kmod package defs
-# ============================================================================
-if ! grep -q "KernelPackage/netlink-diag" "${KERNEL_NETSUPPORT_MK}"; then
-cat >> "${KERNEL_NETSUPPORT_MK}" <<'EOF'
-
-define KernelPackage/netlink-diag
-  SUBMENU:=$(NETWORK_SUPPORT_MENU)
-  TITLE:=Netlink diag support for ss utility
-  KCONFIG:=CONFIG_NETLINK_DIAG
-  FILES:=$(LINUX_DIR)/net/netlink/netlink_diag.ko
-  AUTOLOAD:=$(call AutoLoad,31,netlink-diag)
-endef
-
-define KernelPackage/netlink-diag/description
-  Netlink diag is a module made for use by iproute2 ss.
-endef
-
-$(eval $(call KernelPackage,netlink-diag))
-
-define KernelPackage/inet-diag
-  SUBMENU:=$(NETWORK_SUPPORT_MENU)
-  TITLE:=INET diag support for ss utility
-  KCONFIG:= \\
-    CONFIG_INET_DIAG \\
-    CONFIG_INET_TCP_DIAG \\
-    CONFIG_INET_UDP_DIAG \\
-    CONFIG_INET_RAW_DIAG \\
-    CONFIG_INET_DIAG_DESTROY=n
-  FILES:= \\
-    $(LINUX_DIR)/net/ipv4/inet_diag.ko \\
-    $(LINUX_DIR)/net/ipv4/tcp_diag.ko \\
-    $(LINUX_DIR)/net/ipv4/udp_diag.ko \\
-    $(LINUX_DIR)/net/ipv4/raw_diag.ko
-  AUTOLOAD:=$(call AutoLoad,31,inet_diag tcp_diag udp_diag raw_diag)
-endef
-
-define KernelPackage/inet-diag/description
-  Support for INET socket monitoring used by native Linux tools such as ss.
-endef
-
-$(eval $(call KernelPackage,inet-diag))
-EOF
-fi
-
-# Linux 4.14 already contains these options; they were simply disabled in the
-# generic config. Build them as modules.
-python3 - "${ROOT_DIR}/target/linux/generic/config-4.14" <<'PY'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1])
-s=p.read_text()
-for old,new in {
-    "# CONFIG_INET_DIAG is not set":"CONFIG_INET_DIAG=m",
-    "# CONFIG_INET_TCP_DIAG is not set":"CONFIG_INET_TCP_DIAG=m",
-    "# CONFIG_INET_UDP_DIAG is not set":"CONFIG_INET_UDP_DIAG=m",
-    "# CONFIG_INET_RAW_DIAG is not set":"CONFIG_INET_RAW_DIAG=m",
-    "# CONFIG_NETLINK_DIAG is not set":"CONFIG_NETLINK_DIAG=m",
-}.items():
-    s=s.replace(old,new)
-p.write_text(s)
-PY
-
-# ============================================================================
-# 11. Sanity checks (must match what was actually written above)
+# 10. Sanity checks
 # ============================================================================
 [ -f "${PASSWALL_MK}" ]
 [ -f "${PASSWALL_PACKAGES}/sing-box/Makefile" ]
@@ -525,24 +477,13 @@ grep -q 'xiaomi,mir4)' "${UBOOTENV_FILE}"
 grep -q 'luarocks make --pack-binary-rock' "${LYAML_DIR}/Makefile"
 grep -q 'PKG_VERSION:=26.9.9' "${XRAY_DIR}/Makefile"
 grep -q 'PKG_HASH:=e572d2cdd819318383460443140898e6117e8e0da5f0c359b25f6c890b8d81a2' "${XRAY_DIR}/Makefile"
-grep -q 'KernelPackage/inet-diag' "${KERNEL_NETSUPPORT_MK}"
-grep -q 'KernelPackage/netlink-diag' "${KERNEL_NETSUPPORT_MK}"
-grep -q 'CONFIG_INET_DIAG=m' "${ROOT_DIR}/target/linux/generic/config-4.14"
-grep -q 'CONFIG_NETLINK_DIAG=m' "${ROOT_DIR}/target/linux/generic/config-4.14"
-
-# Optional soft checks for upstream package versions (do not fail the job if
-# PassWall upstream bumped them slightly).
-if ! grep -q 'PKG_VERSION:=1.14' "${PASSWALL_PACKAGES}/sing-box/Makefile"; then
-  echo "WARNING: sing-box PKG_VERSION is not 1.14.x (check PassWall upstream)"
-fi
-if ! grep -q 'PKG_VERSION:=2.5.6' "${PASSWALL_PACKAGES}/shadowsocksr-libev/Makefile"; then
-  echo "WARNING: shadowsocksr-libev PKG_VERSION is not 2.5.6 (check PassWall upstream)"
-fi
 
 echo "============================================================"
 echo "MIR4 / OpenWrt 19.07 / PassWall compatibility patch completed"
 echo "PassWall: main 26.x"
 echo "Xray: 26.9.9 official MIPS32LE binary"
-echo "sing-box: current PassWall package (expect 1.14.x)"
-echo "SSR: current PassWall package (expect 2.5.6)"
+echo "sing-box: upstream (diag kmod deps stripped for 19.07)"
+echo "SSR: upstream"
+echo "USB: disabled (MIR4 has no USB use-case)"
+echo "kmod-inet-diag/netlink-diag: not forced (avoids silentoldconfig break)"
 echo "============================================================"
