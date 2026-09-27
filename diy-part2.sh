@@ -111,32 +111,34 @@ python3 - "${NET}" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text()
+
+def insert_after_case(text, case_line, block):
+    pos=text.find(case_line)
+    if pos < 0:
+        raise SystemExit("case anchor missing: " + case_line.strip())
+    end=text.find("\n\t\t;;", pos)
+    if end < 0:
+        raise SystemExit("case terminator missing: " + case_line.strip())
+    return text[:end+len("\n\t\t;;")] + block + text[end+len("\n\t\t;;"):]
+
 if "\tmir4)" not in s:
-    anchor='''\tmir3g)
-\t\tucidef_add_switch "switch0" \\
-\t\t\t"2:lan:2" "3:lan:1" "1:wan" "6t@eth0"
-\t\t;;
-'''
-    block='''\tmir4)
-\t\tucidef_add_switch "switch0" \\
-\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
-\t\t;;
-'''
-    if anchor not in s: raise SystemExit("MIR3G network anchor missing")
-    s=s.replace(anchor,anchor+block,1)
-section=s[s.find("ramips_setup_macs"):]
-if "\tmir4)" not in section:
-    anchor='''\tmir3g)
-\t\tlan_mac=$(mtd_get_mac_binary Factory 0xe006)
-\t\t;;
-'''
-    block='''\tmir4)
+    s=insert_after_case(s, "\tmir3g)", """\n\tmir4)
+\t\tucidef_add_switch "switch0" \\\n\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
+\t\t;;\n""")
+
+mac_start=s.find("ramips_setup_macs")
+if "\tmir4)" not in s[mac_start:]:
+    pos=s.find("\tmir3g)",mac_start)
+    if pos<0: raise SystemExit("MAC mir3g anchor missing")
+    end=s.find("\n\t\t;;",pos)
+    if end<0: raise SystemExit("MAC mir3g terminator missing")
+    block='''\n\tmir4)
 \t\tlan_mac=$(mtd_get_mac_binary Factory 0xe000)
 \t\twan_mac=$(mtd_get_mac_binary Factory 0xe006)
 \t\t;;
 '''
-    if anchor not in s: raise SystemExit("MIR3G MAC anchor missing")
-    s=s.replace(anchor,anchor+block,1)
+    s=s[:end+len("\n\t\t;;")]+block+s[end+len("\n\t\t;;"):]
+
 p.write_text(s)
 PY
 
@@ -144,18 +146,33 @@ python3 - "${UPG}" "${ENVTOOLS}" <<'PY'
 from pathlib import Path
 import sys
 upg,env=map(Path,sys.argv[1:])
+
 s=upg.read_text()
-s=s.replace('hc5962|\\\nmir3g|\\\nr6220|','hc5962|\\\nmir3g|\\\nmir4|\\\nr6220|')
+if "mir4|\\
+" not in s:
+    needle="mir3g|\\
+"
+    first=s.find(needle)
+    if first<0: raise SystemExit("platform mir3g anchor missing")
+    s=s[:first+len(needle)] + "	mir4|\\
+" + s[first+len(needle):]
+    second=s.find(needle,first+len(needle)+1)
+    if second<0: raise SystemExit("platform second mir3g anchor missing")
+    s=s[:second+len(needle)] + "	mir4|\\
+" + s[second+len(needle):]
 upg.write_text(s)
+
 s=env.read_text()
 if "\tmir4)" not in s:
-    idx=s.rfind("\nesac")
-    if idx < 0: raise SystemExit("ubootenv case/esac anchor missing")
-    block='''\tmir4)
+    pos=s.find("\tmir3g)")
+    if pos<0: raise SystemExit("envtools mir3g anchor missing")
+    end=s.find("\n\t;;",pos)
+    if end<0: raise SystemExit("envtools mir3g terminator missing")
+    block='''\n\tmir4)
 \tubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"
 \t;;
 '''
-    s=s[:idx]+"\n"+block+s[idx:]
+    s=s[:end+len("\n\t;;")]+block+s[end+len("\n\t;;"):]
 env.write_text(s)
 PY
 
