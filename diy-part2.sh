@@ -149,16 +149,13 @@ s=s.replace('hc5962|\\\nmir3g|\\\nr6220|','hc5962|\\\nmir3g|\\\nmir4|\\\nr6220|'
 upg.write_text(s)
 s=env.read_text()
 if "\tmir4)" not in s:
-    anchor='''\tmir3g)
-\tubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"
-\t;;
-'''
+    idx=s.rfind("\nesac")
+    if idx < 0: raise SystemExit("ubootenv case/esac anchor missing")
     block='''\tmir4)
 \tubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"
 \t;;
 '''
-    if anchor not in s: raise SystemExit("MIR3G envtools anchor missing")
-    s=s.replace(anchor,anchor+block,1)
+    s=s[:idx]+"\n"+block+s[idx:]
 env.write_text(s)
 PY
 
