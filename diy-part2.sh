@@ -121,7 +121,7 @@ def insert_after_case(text, case_line, block):
         raise SystemExit("case terminator missing: " + case_line.strip())
     return text[:end+len("\n\t\t;;")] + block + text[end+len("\n\t\t;;"):]
 
-if "\tmir4)" not in s:
+if "mir4)" not in s:
     s=insert_after_case(s, "\tmir3g)", """\n\tmir4)
 \t\tucidef_add_switch "switch0" \\\n\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
 \t\t;;\n""")
@@ -163,7 +163,7 @@ upg.write_text(s)
 
 s=env.read_text()
 if "\tmir4)" not in s:
-    pos=s.find("\tmir3g)")
+    pos=s.find("mir3g)")
     if pos<0: raise SystemExit("envtools mir3g anchor missing")
     end=s.find("\n\t;;",pos)
     if end<0: raise SystemExit("envtools mir3g terminator missing")
@@ -192,8 +192,8 @@ chmod 0755 "${ACC}"
 grep -q 'compatible = "xiaomi,mir4"' "${DTS}"
 grep -q 'define Device/mir4' "${IMAGE}"
 grep -q 'SUPPORTED_DEVICES += MIR4' "${IMAGE}"
-grep -q $'^\tmir4)' "${NET}"
+grep -q 'mir4)' "${NET}"
 grep -q 'mir4|' "${UPG}"
-grep -q $'^\tmir4)' "${ENVTOOLS}"
+grep -q 'mir4)' "${ENVTOOLS}"
 test -f "${ACC}"
 echo "MIR4 board files ready."
