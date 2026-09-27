@@ -1,41 +1,35 @@
-name: Build OpenWrt 19.07 MIR4 helloworld SSR Plus+
-
+name: Build OpenWrt 18.06 MIR4 MTK-HWNAT PassWall
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-      - 'build-*'
-
+    branches: [main]
 permissions:
   contents: write
-
 env:
   TZ: Asia/Shanghai
   REPO_URL: https://github.com/openwrt/openwrt.git
-  REPO_BRANCH: openwrt-19.07
+  REPO_BRANCH: openwrt-18.06
   OPENWRT_DIR: openwrt
   BUILD_JOBS: 4
-  HELLOWORLD_REPO: https://github.com/fw876/helloworld.git
+  PASSWALL_REPO: https://github.com/Openwrt-Passwall/openwrt-passwall.git
+  PASSWALL_CORE_TAG: 4.69-4
+  PASSWALL_LUCI_COMMIT: d1e618220a9a0a4b73d536101f452a2f4cf14861
   GOLANG_REPO: https://github.com/sbwml/packages_lang_golang.git
-  GOLANG_BRANCH: 27.x
-
+  GOLANG_BRANCH: 21.x
+  MTK_REPO: https://github.com/coolsnowwolf/lede.git
+  MTK_COMMIT: 24cb7521b659dac3f37907364d96eb998c1d04af
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install build dependencies
+      - name: Install host dependencies
         run: |
           set -eux
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             build-essential clang llvm ccache file g++ gawk gettext git             libncurses5-dev libncursesw5-dev libssl-dev python3             rsync subversion swig unzip wget xsltproc zlib1g-dev jq             quilt default-jre-headless binutils
-
-      - name: Install Python 2.7 for OpenWrt 19.07
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential clang llvm ccache file g++ gawk gettext git libncurses5-dev libncursesw5-dev libssl-dev python3 rsync subversion swig unzip wget curl xsltproc zlib1g-dev jq quilt binutils bison flex libelf-dev libtool autoconf automake pkg-config
+      - name: Install Python 2.7
         run: |
           set -eux
           cd /tmp
@@ -45,96 +39,85 @@ jobs:
           ./configure --prefix=/opt/python2 --enable-unicode=ucs4 --disable-shared
           make -j2
           sudo make install
-          sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2.7
+          sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python
           sudo ln -sf /opt/python2/bin/python2.7 /usr/local/bin/python2
-          python2 --version
-
+          python --version
       - name: Create swap
         run: |
           set -eux
-          if swapon --show | grep -q '/swapfile'; then
-            echo "swap already enabled"
-          else
-            if [ -f /swapfile ]; then
-              sudo swapoff /swapfile || true
-              sudo rm -f /swapfile
-            fi
-            sudo fallocate -l 8G /swapfile
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
-          fi
-          free -h
-          swapon --show
-
-      - name: Clone OpenWrt 19.07
-        run: |
-          git clone --depth 1 --single-branch --branch "${REPO_BRANCH}"             "${REPO_URL}" "${OPENWRT_DIR}"
-
+          if swapon --show | grep -q '/swapfile'; then exit 0; fi
+          sudo rm -f /swapfile
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+      - name: Clone OpenWrt
+        run: git clone --depth=1 --single-branch --branch "$${REPO_BRANCH}" "$${REPO_URL}" "$${OPENWRT_DIR}"
       - name: Update base feeds
         working-directory: openwrt
-        run: ./scripts/feeds update -a
-
-      - name: Install helloworld and real host dependencies
+        run: |
+          set -eux
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+      - name: Prepare source
         working-directory: openwrt
         run: |
           set -eux
-          bash "${GITHUB_WORKSPACE}/diy-part1.sh"
-          bash "${GITHUB_WORKSPACE}/diy-part2.sh"
-
-      - name: Defconfig and dependency validation
+          bash "$${GITHUB_WORKSPACE}/diy-part1.sh"
+          bash "$${GITHUB_WORKSPACE}/diy-part2.sh"
+      - name: Defconfig and validation
         working-directory: openwrt
         run: |
           set -eux
-          cp "${GITHUB_WORKSPACE}/.config" .config
+          cp "$${GITHUB_WORKSPACE}/.config" .config
           make defconfig
-
-          grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mir4=y$' .config
-          grep -q '^CONFIG_PACKAGE_luci-app-ssr-plus=y$' .config
-          grep -q '^CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Xray=y$' .config
+          grep -q '^CONFIG_TARGET_ramips_mt7621_DEVICE_mir4=y$' .config
+          grep -q '^CONFIG_NET_MEDIATEK_OFFLOAD=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-mt7603e=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-mt76x2e=y$' .config
+          grep -q '^CONFIG_PACKAGE_mt_wifi=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-mtwifi=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y$' .config
           grep -q '^CONFIG_PACKAGE_xray-core=y$' .config
-          grep -q '^CONFIG_PACKAGE_shadowsocksr-libev-ssr-local=y$' .config
-
-          test -f package/helloworld/luci-app-ssr-plus/Makefile
-          test -f package/helloworld/xray-core/Makefile
-          test -f package/feeds/golang27/golang/Makefile
-          test -f package/feeds/golang27/golang/golang-package.mk
-          test -f package/feeds/compat23/rust/Makefile
-          test -f package/feeds/compat23/rust/rust-package.mk
-          test -f package/feeds/modern/lyaml/Makefile
-          test -f package/feeds/kcptun/kcptun-client/Makefile
-
-          echo "MIR4 + helloworld + real Golang 27.x + Rust host + lyaml + kcptun validation passed."
-
-      - name: Build
+          grep -q '^CONFIG_PACKAGE_kmod-ipt-offload=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-tcp-bbr=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-zram=y$' .config
+          grep -q '^CONFIG_PACKAGE_zram-swap=y$' .config
+          test -f package/passwall/luci-app-passwall/Makefile
+          test -f package/passwall/xray-core/Makefile
+          test -f package/passwall/shadowsocksr-libev/Makefile
+          test -f feeds/packages/lang/golang/golang-package.mk
+          test -f package/mtk-closed/drivers/mt7603e/Makefile
+          test -f package/mtk-closed/drivers/mt7612e/Makefile
+          test -f package/mtk-closed/drivers/mt_wifi/Makefile
+          test -f package/mtk-closed/luci/luci-app-mtwifi/Makefile
+          test -f target/linux/ramips/dts/MIR4.dts
+          echo "MIR4 OpenWrt 18.06 validation passed."
+      - name: Build firmware
         working-directory: openwrt
-        run: |
-          set -o pipefail
-          make -j"${BUILD_JOBS}" V=s 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
-
+        run: set -o pipefail && make -j"$${BUILD_JOBS}" V=s 2>&1 | tee "$${GITHUB_WORKSPACE}/build.log"
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-19.07-mir4-build-log-${{ github.run_number }}
+          name: mir4-openwrt-18.06-build-log-$${{ github.run_number }}
           path: build.log
           if-no-files-found: ignore
-          retention-days: 14
-
       - name: Upload firmware
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-19.07-mir4-ssrplus-${{ github.run_number }}
+          name: mir4-openwrt-18.06-mtk-passwall-$${{ github.run_number }}
           path: openwrt/bin/targets/ramips/mt7621/*
           if-no-files-found: error
           retention-days: 30
-
-      - name: Release
+      - name: Create release
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('openwrt-19.07-mir4-ssrplus-{0}', github.run_number) }}
-          name: OpenWrt 19.07 MIR4 SSR Plus+ ${{ github.run_number }}
+          tag_name: mir4-18.06-build-$${{ github.run_number }}
+          name: Xiaomi Mi Router 4 OpenWrt 18.06 MTK HWNAT PassWall $${{ github.run_number }}
           generate_release_notes: true
           files: openwrt/bin/targets/ramips/mt7621/*
