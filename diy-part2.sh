@@ -148,18 +148,17 @@ import sys
 upg,env=map(Path,sys.argv[1:])
 
 s=upg.read_text()
-if "mir4|\\
-" not in s:
-    needle="mir3g|\\
-"
+if "mir4|" not in s:
+    bs=chr(92)
+    needle="mir3g|"
     first=s.find(needle)
     if first<0: raise SystemExit("platform mir3g anchor missing")
-    s=s[:first+len(needle)] + "	mir4|\\
-" + s[first+len(needle):]
-    second=s.find(needle,first+len(needle)+1)
+    line_end=s.find("\n", first)
+    s=s[:line_end+1] + "\tmir4|" + bs + "\n" + s[line_end+1:]
+    second=s.find(needle, line_end+1)
     if second<0: raise SystemExit("platform second mir3g anchor missing")
-    s=s[:second+len(needle)] + "	mir4|\\
-" + s[second+len(needle):]
+    line_end=s.find("\n", second)
+    s=s[:line_end+1] + "\tmir4|" + bs + "\n" + s[line_end+1:]
 upg.write_text(s)
 
 s=env.read_text()
