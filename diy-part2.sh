@@ -196,4 +196,12 @@ grep -q 'mir4)' "${NET}"
 grep -q 'mir4|' "${UPG}"
 grep -q 'mir4)' "${ENVTOOLS}"
 test -f "${ACC}"
+# OpenWrt 18.06 is old; refresh obsolete host-tool source mirrors while keeping exact pinned versions/hashes.
+sed -i 's#PKG_SOURCE_URL:=@SF/expat#PKG_SOURCE_URL:=https://github.com/libexpat/libexpat/releases/download/R_2_2_9#' "${ROOT}/tools/expat/Makefile"
+sed -i 's#PKG_SOURCE_URL:=@SF/scons \\\\#PKG_SOURCE_URL:=https://netix.dl.sourceforge.net/project/scons/scons/3.0.1#' "${ROOT}/tools/scons/Makefile"
+sed -i 's#PKG_SOURCE_URL:=http://downloads.openwrt.org/sources/#PKG_SOURCE_URL:=https://mirror2.openwrt.org/sources/#' "${ROOT}/tools/lzma/Makefile"
+sed -i 's#@SF/lzmautils \\\\#https://github.com/tukaani-project/xz/releases/download/v5.2.4#' "${ROOT}/tools/xz/Makefile"
+# GNU m4 1.4.19 contains the glibc >= 2.34 SIGSTKSZ fix and builds cleanly on Ubuntu 22.04.
+sed -i 's/^PKG_VERSION:=1.4.18$/PKG_VERSION:=1.4.19/' "${ROOT}/tools/m4/Makefile"
+sed -i 's/^PKG_HASH:=f2c1e86ca0a404ff281631bdc8377638992744b175afb806e25871a24a934e07$/PKG_HASH:=63aede5c6d33b6d9b13511cd0be2cac046f2e70fd0a07aa9573a04a82783af96/' "${ROOT}/tools/m4/Makefile"
 echo "MIR4 board files ready."
