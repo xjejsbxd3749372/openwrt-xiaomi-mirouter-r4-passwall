@@ -11,6 +11,8 @@ env:
   REPO_BRANCH: openwrt-18.06
   OPENWRT_DIR: openwrt
   BUILD_JOBS: 4
+  CC: gcc-10
+  CXX: g++-10
   PASSWALL_REPO: https://github.com/Openwrt-Passwall/openwrt-passwall.git
   PASSWALL_CORE_TAG: 4.69-4
   PASSWALL_LUCI_COMMIT: d1e618220a9a0a4b73d536101f452a2f4cf14861
@@ -28,7 +30,7 @@ jobs:
         run: |
           set -eux
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential clang llvm ccache file g++ gawk gettext git libncurses5-dev libncursesw5-dev libssl-dev python3 rsync subversion swig unzip wget curl xsltproc zlib1g-dev jq quilt binutils bison flex libelf-dev libtool autoconf automake pkg-config
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential gcc-10 g++-10 clang llvm ccache file g++ gawk gettext git libncurses5-dev libncursesw5-dev libssl-dev python3 rsync subversion swig unzip wget curl xsltproc zlib1g-dev jq quilt binutils bison flex libelf-dev libtool autoconf automake pkg-config
       - name: Install Python 2.7
         run: |
           set -eux
