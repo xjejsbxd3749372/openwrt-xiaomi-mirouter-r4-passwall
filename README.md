@@ -11,4 +11,4 @@
 <!-- MIR4 18.06 build trigger: GCC10 -->
 
 
-<!-- MIR4 CI m4 minimal patch trigger -->
+<!-- MIR4 CI known 18.06 m4 patch trigger -->
