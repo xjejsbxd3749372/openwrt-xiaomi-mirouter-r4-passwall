@@ -6,3 +6,6 @@
 - ZRAM 64MB with LZ4
 - PassWall 4.69-4 legacy firewall3/iptables line with Xray and SSR/SS
 - Go 21.x feed for old OpenWrt host/toolchain compatibility
+
+
+<!-- MIR4 18.06 build trigger: GCC10 -->
