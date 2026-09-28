@@ -11,4 +11,4 @@
 <!-- MIR4 18.06 build trigger: GCC10 -->
 
 
-<!-- MIR4 CI final trigger -->
+<!-- MIR4 CI host-source refresh trigger -->
