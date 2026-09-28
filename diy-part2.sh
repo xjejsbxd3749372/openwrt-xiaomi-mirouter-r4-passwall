@@ -196,12 +196,109 @@ grep -q 'mir4)' "${NET}"
 grep -q 'mir4|' "${UPG}"
 grep -q 'mir4)' "${ENVTOOLS}"
 test -f "${ACC}"
-# OpenWrt 18.06 is old; refresh obsolete host-tool source mirrors while keeping exact pinned versions/hashes.
-sed -i 's#PKG_SOURCE_URL:=@SF/expat#PKG_SOURCE_URL:=https://github.com/libexpat/libexpat/releases/download/R_2_2_9#' "${ROOT}/tools/expat/Makefile"
-sed -i 's#PKG_SOURCE_URL:=@SF/scons \\\\#PKG_SOURCE_URL:=https://netix.dl.sourceforge.net/project/scons/scons/3.0.1#' "${ROOT}/tools/scons/Makefile"
-sed -i 's#PKG_SOURCE_URL:=http://downloads.openwrt.org/sources/#PKG_SOURCE_URL:=https://mirror2.openwrt.org/sources/#' "${ROOT}/tools/lzma/Makefile"
-sed -i 's#@SF/lzmautils \\\\#https://github.com/tukaani-project/xz/releases/download/v5.2.4#' "${ROOT}/tools/xz/Makefile"
-# GNU m4 1.4.19 contains the glibc >= 2.34 SIGSTKSZ fix and builds cleanly on Ubuntu 22.04.
-sed -i 's/^PKG_VERSION:=1.4.18$/PKG_VERSION:=1.4.19/' "${ROOT}/tools/m4/Makefile"
-sed -i 's/^PKG_HASH:=f2c1e86ca0a404ff281631bdc8377638992744b175afb806e25871a24a934e07$/PKG_HASH:=63aede5c6d33b6d9b13511cd0be2cac046f2e70fd0a07aa9573a04a82783af96/' "${ROOT}/tools/m4/Makefile"
+# OpenWrt 18.06 has old host-tool source URLs. Keep its pinned versions/hashes,
+# but use currently reachable mirrors/releases.
+python3 - "${ROOT}" <<'PY'
+from pathlib import Path
+import sys
+root=Path(sys.argv[1])
+
+def set_source(path, url):
+    p=root/path
+    lines=p.read_text().splitlines()
+    out=[]
+    skipping=False
+    for line in lines:
+        if line.startswith("PKG_SOURCE_URL:="):
+            out.append("PKG_SOURCE_URL:="+url)
+            skipping=True
+            continue
+        if skipping and (line.startswith("\t") or line.startswith("    ")):
+            continue
+        skipping=False
+        out.append(line)
+    p.write_text("\n".join(out)+"\n")
+
+set_source("tools/expat/Makefile", "https://github.com/libexpat/libexpat/releases/download/R_2_2_9")
+set_source("tools/scons/Makefile", "https://netix.dl.sourceforge.net/project/scons/scons/3.0.1")
+set_source("tools/lzma/Makefile", "https://mirror2.openwrt.org/sources/")
+set_source("tools/xz/Makefile", "https://github.com/tukaani-project/xz/releases/download/v5.2.4")
+
+m4=root/"tools/m4/Makefile"
+ms=m4.read_text()
+ms=ms.replace("PKG_VERSION:=1.4.19","PKG_VERSION:=1.4.18")
+ms=ms.replace("PKG_HASH:=63aede5c6d33b6d9b13511cd0be2cac046f2e70fd0a07aa9573a04a82783af96",
+              "PKG_HASH:=f2c1e86ca0a404ff281631bdc8377638992744b175afb806e25871a24a934e07")
+m4.write_text(ms)
+PY
+
+# m4 1.4.18 expects SIGSTKSZ to be a preprocessor constant. Ubuntu 22.04/glibc
+# exposes a dynamic SIGSTKSZ, so apply the established gnulib portability fix.
+mkdir -p "${ROOT}/tools/m4/patches"
+cat > "${ROOT}/tools/m4/patches/999-glibc-2.34-sigstksz.patch" <<'PATCH'
+diff --git a/lib/c-stack.c b/lib/c-stack.c
+index 5353c08..863f764 100644
+--- a/lib/c-stack.c
++++ b/lib/c-stack.c
+@@ -51,13 +51,14 @@
+ typedef struct sigaltstack stack_t;
+ #endif
+ #ifndef SIGSTKSZ
+-# define SIGSTKSZ 16384
+-#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
++#define get_sigstksz() (16384)
++#elif HAVE_LIBSIGSEGV
+ /* libsigsegv 2.6 through 2.8 have a bug where some architectures use
+    more than the Linux default of an 8k alternate stack when deciding
+    if a fault was caused by stack overflow. */
+-# undef SIGSTKSZ
+-# define SIGSTKSZ 16384
++#define get_sigstksz() ((SIGSTKSZ) < 16384 ? 16384 : (SIGSTKSZ))
++#else
++#define get_sigstksz() ((SIGSTKSZ))
+ #endif
+ 
+ #include <stdlib.h>
+@@ -131,7 +132,8 @@
+ /* Storage for the alternate signal stack. */
+ static union
+ {
+-  char buffer[SIGSTKSZ];
++  /* allocate buffer with size from get_sigstksz() */
++  char *buffer;
+ 
+   /* These other members are to force proper alignment. */
+   max_align_t align;
+@@ -203,7 +205,8 @@
+   program_error_message = _("program error");
+ 
+   /* Always install the overflow handler. */
++  alternate_signal_stack.buffer = malloc(get_sigstksz());
+   if (stackoverflow_install_handler (overflow_handler,
+                                      alternate_signal_stack.buffer,
+-                                     sizeof alternate_signal_stack.buffer))
++                                     get_sigstksz()))
+     {
+       errno = ENOTSUP;
+       return -1;
+@@ -279,14 +282,15 @@
+   stack_t st;
+   struct sigaction act;
+   st.ss_flags = 0;
++  alternate_signal_stack.buffer = malloc(get_sigstksz());
+ # if SIGALTSTACK_SS_REVERSED
+   /* Irix mistakenly treats ss_sp as the upper bound, rather than
+      lower bound, of the alternate stack. */
+-  st.ss_sp = alternate_signal_stack.buffer + SIGSTKSZ - sizeof (void *);
+-  st.ss_size = sizeof alternate_signal_stack.buffer - sizeof (void *);
++  st.ss_sp = alternate_signal_stack.buffer + get_sigstksz() - sizeof (void *);
++  st.ss_size = get_sigstksz() - sizeof (void *);
+ # else
+   st.ss_sp = alternate_signal_stack.buffer;
+-  st.ss_size = sizeof alternate_signal_stack.buffer;
++  st.ss_size = get_sigstksz();
+ # endif
+   r = sigaltstack (&st, NULL);
+   if (r != 0)
+PATCH
 echo "MIR4 board files ready."
