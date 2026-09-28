@@ -237,68 +237,23 @@ PY
 mkdir -p "${ROOT}/tools/m4/patches"
 cat > "${ROOT}/tools/m4/patches/999-glibc-2.34-sigstksz.patch" <<'PATCH'
 diff --git a/lib/c-stack.c b/lib/c-stack.c
-index 5353c08..863f764 100644
 --- a/lib/c-stack.c
 +++ b/lib/c-stack.c
-@@ -51,13 +51,14 @@
+@@ -49,14 +49,10 @@
+ #include <signal.h>
+ #if ! HAVE_STACK_T && ! defined stack_t
  typedef struct sigaltstack stack_t;
  #endif
- #ifndef SIGSTKSZ
+-#ifndef SIGSTKSZ
 -# define SIGSTKSZ 16384
 -#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
-+#define get_sigstksz() (16384)
-+#elif HAVE_LIBSIGSEGV
- /* libsigsegv 2.6 through 2.8 have a bug where some architectures use
-    more than the Linux default of an 8k alternate stack when deciding
-    if a fault was caused by stack overflow. */
--# undef SIGSTKSZ
+-/* libsigsegv 2.6 through 2.8 have a bug where some architectures use
+-   more than the Linux default of an 8k alternate stack when deciding
+-   if a fault was caused by stack overflow.  */
++#ifdef SIGSTKSZ
+ # undef SIGSTKSZ
 -# define SIGSTKSZ 16384
-+#define get_sigstksz() ((SIGSTKSZ) < 16384 ? 16384 : (SIGSTKSZ))
-+#else
-+#define get_sigstksz() ((SIGSTKSZ))
  #endif
- 
- #include <stdlib.h>
-@@ -131,7 +132,8 @@
- /* Storage for the alternate signal stack. */
- static union
- {
--  char buffer[SIGSTKSZ];
-+  /* allocate buffer with size from get_sigstksz() */
-+  char *buffer;
- 
-   /* These other members are to force proper alignment. */
-   max_align_t align;
-@@ -203,7 +205,8 @@
-   program_error_message = _("program error");
- 
-   /* Always install the overflow handler. */
-+  alternate_signal_stack.buffer = malloc(get_sigstksz());
-   if (stackoverflow_install_handler (overflow_handler,
-                                      alternate_signal_stack.buffer,
--                                     sizeof alternate_signal_stack.buffer))
-+                                     get_sigstksz()))
-     {
-       errno = ENOTSUP;
-       return -1;
-@@ -279,14 +282,15 @@
-   stack_t st;
-   struct sigaction act;
-   st.ss_flags = 0;
-+  alternate_signal_stack.buffer = malloc(get_sigstksz());
- # if SIGALTSTACK_SS_REVERSED
-   /* Irix mistakenly treats ss_sp as the upper bound, rather than
-      lower bound, of the alternate stack. */
--  st.ss_sp = alternate_signal_stack.buffer + SIGSTKSZ - sizeof (void *);
--  st.ss_size = sizeof alternate_signal_stack.buffer - sizeof (void *);
-+  st.ss_sp = alternate_signal_stack.buffer + get_sigstksz() - sizeof (void *);
-+  st.ss_size = get_sigstksz() - sizeof (void *);
- # else
-   st.ss_sp = alternate_signal_stack.buffer;
--  st.ss_size = sizeof alternate_signal_stack.buffer;
-+  st.ss_size = get_sigstksz();
- # endif
-   r = sigaltstack (&st, NULL);
-   if (r != 0)
++#define SIGSTKSZ 16384
 PATCH
 echo "MIR4 board files ready."
