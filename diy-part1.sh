@@ -59,3 +59,20 @@ cp -a "${TMP_MTK}/package/lean/mt/luci-app-mtwifi" "${MTK}/luci/"
 
 rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/v2ray-core feeds/packages/net/shadowsocks-rust feeds/packages/net/sing-box feeds/packages/net/naiveproxy feeds/packages/net/hysteria feeds/packages/net/trojan feeds/packages/net/trojan-go feeds/packages/net/v2ray-plugin feeds/packages/net/xray-plugin || true
 echo "Preparation complete."
+
+# ---------------------------------------------------------------------------
+# OpenWrt 18.06 ships Linux 4.14, but the MTK closed driver reads
+# task_struct.thread_pid, a field the kernel only gained in 4.19. Without
+# this the driver fails to compile ("has no member named 'thread_pid'") and
+# the whole build dies. task_pid(current) exists on both.
+while IFS= read -r f; do
+  sed -i 's/current->thread_pid/task_pid(current)/g' "$f"
+  echo "kernel-4.14 compat applied: $f"
+done < <(find package/mtk-closed -name rt_linux.h -type f)
+
+# SSR-Plus (lean's fork, preserved for OpenWrt 18.06)
+cat >> feeds.conf.default <<'FEEDS'
+src-git ssrplus https://github.com/P0lari5/luci-app-ssr-plus.git;master
+FEEDS
+
+echo "diy-part1 complete"
