@@ -116,28 +116,28 @@ def insert_after_case(text, case_line, block):
     pos=text.find(case_line)
     if pos < 0:
         raise SystemExit("case anchor missing: " + case_line.strip())
-    end=text.find("\n\t\t;;", pos)
+    end=text.find("\n		;;", pos)
     if end < 0:
         raise SystemExit("case terminator missing: " + case_line.strip())
-    return text[:end+len("\n\t\t;;")] + block + text[end+len("\n\t\t;;"):]
+    return text[:end+len("\n		;;")] + block + text[end+len("\n		;;"):]
 
 if "mir4)" not in s:
-    s=insert_after_case(s, "\tmir3g)", """\n\tmir4)
-\t\tucidef_add_switch "switch0" \\\n\t\t\t"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
-\t\t;;\n""")
+    s=insert_after_case(s, "	mir3g)", """\n	mir4)
+		ucidef_add_switch "switch0" \\\n			"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
+		;;\n""")
 
 mac_start=s.find("ramips_setup_macs")
-if "\tmir4)" not in s[mac_start:]:
-    pos=s.find("\tmir3g)",mac_start)
+if "	mir4)" not in s[mac_start:]:
+    pos=s.find("	mir3g)",mac_start)
     if pos<0: raise SystemExit("MAC mir3g anchor missing")
-    end=s.find("\n\t\t;;",pos)
+    end=s.find("\n		;;",pos)
     if end<0: raise SystemExit("MAC mir3g terminator missing")
-    block='''\n\tmir4)
-\t\tlan_mac=$(mtd_get_mac_binary Factory 0xe000)
-\t\twan_mac=$(mtd_get_mac_binary Factory 0xe006)
-\t\t;;
+    block='''\n	mir4)
+		lan_mac=$(mtd_get_mac_binary Factory 0xe000)
+		wan_mac=$(mtd_get_mac_binary Factory 0xe006)
+		;;
 '''
-    s=s[:end+len("\n\t\t;;")]+block+s[end+len("\n\t\t;;"):]
+    s=s[:end+len("\n		;;")]+block+s[end+len("\n		;;"):]
 
 p.write_text(s)
 PY
@@ -154,24 +154,24 @@ if "mir4|" not in s:
     first=s.find(needle)
     if first<0: raise SystemExit("platform mir3g anchor missing")
     line_end=s.find("\n", first)
-    s=s[:line_end+1] + "\tmir4|" + bs + "\n" + s[line_end+1:]
+    s=s[:line_end+1] + "	mir4|" + bs + "\n" + s[line_end+1:]
     second=s.find(needle, line_end+1)
     if second<0: raise SystemExit("platform second mir3g anchor missing")
     line_end=s.find("\n", second)
-    s=s[:line_end+1] + "\tmir4|" + bs + "\n" + s[line_end+1:]
+    s=s[:line_end+1] + "	mir4|" + bs + "\n" + s[line_end+1:]
 upg.write_text(s)
 
 s=env.read_text()
-if "\tmir4)" not in s:
+if "	mir4)" not in s:
     pos=s.find("mir3g)")
     if pos<0: raise SystemExit("envtools mir3g anchor missing")
-    end=s.find("\n\t;;",pos)
+    end=s.find("\n	;;",pos)
     if end<0: raise SystemExit("envtools mir3g terminator missing")
-    block='''\n\tmir4)
-\tubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"
-\t;;
+    block='''\n	mir4)
+	ubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"
+	;;
 '''
-    s=s[:end+len("\n\t;;")]+block+s[end+len("\n\t;;"):]
+    s=s[:end+len("\n	;;")]+block+s[end+len("\n	;;"):]
 env.write_text(s)
 PY
 
@@ -213,7 +213,7 @@ def set_source(path, url):
             out.append("PKG_SOURCE_URL:="+url)
             skipping=True
             continue
-        if skipping and (line.startswith("\t") or line.startswith("    ")):
+        if skipping and (line.startswith("	") or line.startswith("    ")):
             continue
         skipping=False
         out.append(line)
@@ -257,3 +257,97 @@ cat > "${ROOT}/tools/m4/patches/999-glibc-2.34-sigstksz.patch" <<'PATCH'
 +#define SIGSTKSZ 16384
 PATCH
 echo "MIR4 board files ready."
+
+# ---------------------------------------------------------------------------
+# Xray-core v26.9.9 as a prebuilt mipsel softfloat binary.
+#   * building 26.x needs Go >= 1.26 (crypto/hpke), the 18.06 golang feed
+#     stops at Go 1.21;
+#   * PassWall 4.69-4 only ships xray 1.8.4;
+#   * the official mips32le zip is not guaranteed to be softfloat, and
+#     MT7621 has no FPU - so use the locally verified build instead.
+XDIR="${ROOT}/package/passwall/xray-core"
+mkdir -p "${XDIR}/files"
+curl -fsSL --retry 3 -o "${XDIR}/files/xray" \
+  https://github.com/xjejsbxd3749372/openwrt-xiaomi-mirouter-r4-passwall/releases/download/xray-v26.9.9/xray-mipsle-1.26.8
+echo "41e2aabfbce4218c5ee0ea82c639c0da7424c159739f829538e11682955af4e6  ${XDIR}/files/xray" | sha256sum -c -
+
+# exactly one definition of "xray-core" may stay in the tree, otherwise
+# make picks the feed copy (1.8.4) and the prebuilt never gets installed.
+rm -rf package/feeds/packages/xray-core feeds/packages/net/xray-core
+
+cat > "${XDIR}/Makefile" <<'XRAYMK'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=xray-core
+PKG_VERSION:=26.9.9
+PKG_RELEASE:=1
+PKG_LICENSE:=MPL-2.0
+PKG_LICENSE_FILES:=LICENSE
+PKG_FLAGS:=nostrip
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/xray/template
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=IP Addresses and Names
+  TITLE:=Xray-core proxy platform
+  DEPENDS:=+libpthread +libm
+endef
+
+define Package/xray-core
+  $(call Package/xray/template)
+  TITLE:=Xray-core v26.9.9 (prebuilt mipsel softfloat)
+endef
+
+define Package/xray-example
+  $(call Package/xray/template)
+  TITLE:=Xray-core example configuration
+endef
+
+define Package/xray-core/description
+ Xray-core v26.9.9 prebuilt static mipsel softfloat binary, built with
+ Go 1.26.8 so it runs on the OpenWrt 18.06 (Linux 4.14) kernel.
+endef
+
+define Package/xray-example/description
+ Example Xray configuration files.
+endef
+
+define Package/xray-core/conffiles
+/etc/config/xray
+endef
+
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+endef
+
+define Build/Configure
+endef
+
+define Build/Compile
+endef
+
+define Package/xray-core/install
+	$(INSTALL_DIR) $(1)/usr/bin/
+	$(INSTALL_BIN) $(CURDIR)/files/xray $(1)/usr/bin/xray
+	$(INSTALL_DIR) $(1)/etc/xray/
+	$(INSTALL_DATA) $(CURDIR)/files/config.json.example $(1)/etc/xray/
+	$(INSTALL_DIR) $(1)/etc/config/
+	$(INSTALL_CONF) $(CURDIR)/files/xray.conf $(1)/etc/config/xray
+	$(INSTALL_DIR) $(1)/etc/init.d/
+	$(INSTALL_BIN) $(CURDIR)/files/xray.init $(1)/etc/init.d/xray
+endef
+
+define Package/xray-example/install
+	$(INSTALL_DIR) $(1)/etc/xray/
+	$(INSTALL_DATA) $(CURDIR)/files/config.json.example $(1)/etc/xray/
+endef
+
+$(eval $(call BuildPackage,xray-core))
+$(eval $(call BuildPackage,xray-example))
+XRAYMK
+
+test -s "${XDIR}/files/xray"
+test -f "${XDIR}/Makefile"
+echo "xray-core 26.9.9 (prebuilt) installed"
