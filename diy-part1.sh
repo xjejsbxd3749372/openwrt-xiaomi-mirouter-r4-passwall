@@ -76,3 +76,64 @@ src-git ssrplus https://github.com/P0lari5/luci-app-ssr-plus.git;master
 FEEDS
 
 echo "diy-part1 complete"
+# ---------------------------------------------------------------------------
+# Second kernel-4.14 incompatibility in the same driver: this MTK source is
+# written against Linux >= 5.0, where access_ok() takes two arguments
+# (addr, size). 4.14 still has the pre-5.0 three-argument form
+# (type, addr, size), so every two-argument call fails with
+#   error: macro "access_ok" requires 3 arguments, but only 2 given
+# and the compiler then reports the identifier as undeclared. Rewrite only
+# the two-argument call sites - the three-argument ones are left alone, as
+# are any macro definitions.
+python3 - <<'PYACC'
+import pathlib, re
+
+pat = re.compile(r"(?<![A-Za-z0-9_])access_ok\s*\(")
+total = 0
+
+def upgrade(text):
+    out, i, n, changed = [], 0, len(text), 0
+    while True:
+        m = pat.search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        start = m.end()
+        depth, j, commas = 1, start, 0
+        while j < n and depth:
+            c = text[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            elif c == "," and depth == 1:
+                commas += 1
+            j += 1
+        if commas == 1:            # exactly two arguments
+            out.append(text[i:start])
+            out.append("VERIFY_READ, ")
+            i, changed = start, changed + 1
+        else:
+            out.append(text[i:j])
+            i = j
+    return "".join(out), changed
+
+for root in ["package/mtk-closed"]:
+    for p in sorted(pathlib.Path(root).rglob("*")):
+        if p.suffix not in (".c", ".h") or not p.is_file():
+            continue
+        try:
+            src = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if "access_ok" not in src:
+            continue
+        fixed, n = upgrade(src)
+        if n:
+            p.write_text(fixed, encoding="utf-8")
+            print(f"  access_ok: {n} call(s) -> 3-arg form in {p}")
+            total += n
+
+print(f"  access_ok: {total} call(s) fixed for kernel 4.14")
+PYACC
+echo "diy-part1 kernel-4.14 fixes complete"
