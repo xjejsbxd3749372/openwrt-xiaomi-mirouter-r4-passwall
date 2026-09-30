@@ -132,6 +132,11 @@ jobs:
           # this build (kernel-version-sensitive API usage). Compile them on
           # their own first so an incompatible kernel API surfaces in minutes
           # instead of at the end of a full 40 minute build.
+          # Kernel first: the driver is an out-of-tree module and needs the
+          # prepared kernel tree (.config, headers, Module.symvers). This
+          # work is required by the full build anyway, so it costs nothing.
+          make target/linux/compile -j"${BUILD_JOBS}" V=s \
+            2>&1 | tee "${GITHUB_WORKSPACE}/kernel.log"
           make package/mtk-closed/drivers/mt7603e/compile -j"${BUILD_JOBS}" V=s \
             2>&1 | tee "${GITHUB_WORKSPACE}/mtk-mt7603e.log"
           make package/mtk-closed/drivers/mt7612e/compile -j"${BUILD_JOBS}" V=s \
@@ -152,6 +157,7 @@ jobs:
           name: mir4-openwrt-18.06-build-log-${{ github.run_number }}
           path: |
             build.log
+            kernel.log
             mtk-*.log
           if-no-files-found: ignore
 
