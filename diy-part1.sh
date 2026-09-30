@@ -48,7 +48,7 @@ git init "${TMP_MTK}"
 git -C "${TMP_MTK}" remote add origin "${MTK_REPO}"
 git -C "${TMP_MTK}" fetch --depth=1 origin "${MTK_COMMIT}"
 git -C "${TMP_MTK}" checkout --detach FETCH_HEAD
-for p in package/lean/mt/drivers/mt7603e package/lean/mt/drivers/mt7612e package/lean/mt/drivers/mt_wifi package/lean/mt/luci-app-mtwifi; do package/lean/pdnsd-alt
+for p in package/lean/mt/drivers/mt7603e package/lean/mt/drivers/mt7612e package/lean/mt/drivers/mt_wifi package/lean/mt/luci-app-mtwifi package/lean/pdnsd-alt; do
   test -d "${TMP_MTK}/${p}"
 done
 mkdir -p "${MTK}/drivers" "${MTK}/luci"
