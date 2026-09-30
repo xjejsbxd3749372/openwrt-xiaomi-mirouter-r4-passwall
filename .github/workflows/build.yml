@@ -122,26 +122,6 @@ jobs:
 
           echo "MIR4 OpenWrt 18.06 validation passed."
 
-      - name: Build MTK drivers first (fail fast)
-        working-directory: openwrt
-        run: |
-          set -o pipefail
-          export CC=gcc-10
-          export CXX=g++-10
-          # The MTK closed drivers are the slowest and most fragile part of
-          # this build (kernel-version-sensitive API usage). Compile them on
-          # their own first so an incompatible kernel API surfaces in minutes
-          # instead of at the end of a full 40 minute build.
-          # Kernel first: the driver is an out-of-tree module and needs the
-          # prepared kernel tree (.config, headers, Module.symvers). This
-          # work is required by the full build anyway, so it costs nothing.
-          make target/linux/compile -j"${BUILD_JOBS}" V=s \
-            2>&1 | tee "${GITHUB_WORKSPACE}/kernel.log"
-          make package/mtk-closed/drivers/mt7603e/compile -j"${BUILD_JOBS}" V=s \
-            2>&1 | tee "${GITHUB_WORKSPACE}/mtk-mt7603e.log"
-          make package/mtk-closed/drivers/mt7612e/compile -j"${BUILD_JOBS}" V=s \
-            2>&1 | tee "${GITHUB_WORKSPACE}/mtk-mt7612e.log"
-
       - name: Build firmware
         working-directory: openwrt
         run: |
@@ -155,10 +135,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mir4-openwrt-18.06-build-log-${{ github.run_number }}
-          path: |
-            build.log
-            kernel.log
-            mtk-*.log
+          path: build.log
           if-no-files-found: ignore
 
       - name: Upload firmware
