@@ -260,6 +260,8 @@ echo "MIR4 board files ready."
 
 # ---------------------------------------------------------------------------
 # Xray-core v26.9.9 as a prebuilt mipsel softfloat binary.
+# (fully static - no libc dependency; OpenWrt 18.06 has no "libm" package,
+#  so the DEPENDS below must not mention it)
 #   * building 26.x needs Go >= 1.26 (crypto/hpke), the 18.06 golang feed
 #     stops at Go 1.21;
 #   * PassWall 4.69-4 only ships xray 1.8.4;
@@ -292,7 +294,7 @@ define Package/xray/template
   CATEGORY:=Network
   SUBMENU:=IP Addresses and Names
   TITLE:=Xray-core proxy platform
-  DEPENDS:=+libpthread +libm
+  DEPENDS:=+libpthread
 endef
 
 define Package/xray-core
