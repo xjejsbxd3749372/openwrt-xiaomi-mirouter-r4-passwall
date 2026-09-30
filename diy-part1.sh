@@ -48,7 +48,7 @@ git init "${TMP_MTK}"
 git -C "${TMP_MTK}" remote add origin "${MTK_REPO}"
 git -C "${TMP_MTK}" fetch --depth=1 origin "${MTK_COMMIT}"
 git -C "${TMP_MTK}" checkout --detach FETCH_HEAD
-for p in package/lean/mt/drivers/mt7603e package/lean/mt/drivers/mt7612e package/lean/mt/drivers/mt_wifi package/lean/mt/luci-app-mtwifi; do
+for p in package/lean/mt/drivers/mt7603e package/lean/mt/drivers/mt7612e package/lean/mt/drivers/mt_wifi package/lean/mt/luci-app-mtwifi; do package/lean/pdnsd-alt
   test -d "${TMP_MTK}/${p}"
 done
 mkdir -p "${MTK}/drivers" "${MTK}/luci"
@@ -56,6 +56,40 @@ cp -a "${TMP_MTK}/package/lean/mt/drivers/mt7603e" "${MTK}/drivers/"
 cp -a "${TMP_MTK}/package/lean/mt/drivers/mt7612e" "${MTK}/drivers/"
 cp -a "${TMP_MTK}/package/lean/mt/drivers/mt_wifi" "${MTK}/drivers/"
 cp -a "${TMP_MTK}/package/lean/mt/luci-app-mtwifi" "${MTK}/luci/"
+  rm -rf "${ROOT}/package/pdnsd-alt"
+  cp -a "${TMP_MTK}/package/lean/pdnsd-alt" "${ROOT}/package/"
+  test -f "${ROOT}/package/pdnsd-alt/Makefile"
+
+# ---------------------------------------------------------------------------
+# SSR-Plus.  P0lari5's luci-app-ssr-plus is a LuCI package that sits at the
+# repository root (Makefile + luasrc/ + root/ + po/), and OpenWrt 18.06's
+# scripts/feeds cannot index that layout: index generation dies with
+# "target pattern contains no '%'" and feeds then reports
+# "Ignoring feed 'ssrplus' - index missing", so make defconfig silently drops
+# CONFIG_PACKAGE_luci-app-ssr-plus.  Cloning it into package/ works instead -
+# there a package directory is exactly Makefile + luasrc/ + root/ + po/.
+SSR_SRC="${SSR_SRC:-https://github.com/P0lari5/luci-app-ssr-plus.git}"
+SSR_DIR="${ROOT}/package/luci-app-ssr-plus"
+rm -rf "${SSR_DIR}"
+git clone --depth=1 "${SSR_SRC}" "${SSR_DIR}"
+test -f "${SSR_DIR}/Makefile"
+test -d "${SSR_DIR}/luasrc"
+test -d "${SSR_DIR}/root"
+
+# Its DEPENDS names +shadowsocksr-libev-alt, a package that exists only in
+# coolsnowwolf's tree; shipping a second copy of shadowsocksr-libev next to
+# PassWall's would give both packages the same name.  Retarget the dependency
+# at the client subpackages PassWall already provides (both are in the image).
+sed -i 's@+shadowsocksr-libev-alt@+shadowsocksr-libev-ssr-redir +shadowsocksr-libev-ssr-local@g' "${SSR_DIR}/Makefile"
+grep -q 'shadowsocksr-libev-ssr-redir' "${SSR_DIR}/Makefile"
+
+# +pdnsd-alt is kept: SSR-Plus ships with option pdnsd_enable '1', so its
+# default DNS chain needs pdnsd, and the package comes from the lede checkout
+# fetched above (source: github.com/shadowsocks/pdnsd).
+grep -q 'pdnsd-alt' "${SSR_DIR}/Makefile"
+test -f "${ROOT}/package/pdnsd-alt/Makefile"
+echo "SSR-Plus prepared:"
+grep -m1 'DEPENDS:=' "${SSR_DIR}/Makefile"
 
 rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/v2ray-core feeds/packages/net/shadowsocks-rust feeds/packages/net/sing-box feeds/packages/net/naiveproxy feeds/packages/net/hysteria feeds/packages/net/trojan feeds/packages/net/trojan-go feeds/packages/net/v2ray-plugin feeds/packages/net/xray-plugin || true
 echo "Preparation complete."
