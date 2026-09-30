@@ -73,7 +73,19 @@ jobs:
         run: |
           git clone --depth=1 --single-branch --branch "${REPO_BRANCH}" "${REPO_URL}" "${OPENWRT_DIR}"
 
-      - name: Update base feeds
+      - name: Add SSR-Plus feed
+      working-directory: openwrt
+      run: |
+        # The feed has to be declared before "Update base feeds": feeds
+        # update/install run ahead of diy-part1, so anything appended later
+        # never reaches the package index and the Kconfig symbol for
+        # luci-app-ssr-plus would be silently dropped by make defconfig.
+        cat >> feeds.conf.default <<'FEEDS'
+        src-git ssrplus https://github.com/P0lari5/luci-app-ssr-plus.git;master
+        FEEDS
+        cat feeds.conf.default
+
+    - name: Update base feeds
         working-directory: openwrt
         run: |
           set -eux

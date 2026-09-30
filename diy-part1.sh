@@ -70,10 +70,8 @@ while IFS= read -r f; do
   echo "kernel-4.14 compat applied: $f"
 done < <(find package/mtk-closed -name rt_linux.h -type f)
 
-# SSR-Plus (lean's fork, preserved for OpenWrt 18.06)
-cat >> feeds.conf.default <<'FEEDS'
-src-git ssrplus https://github.com/P0lari5/luci-app-ssr-plus.git;master
-FEEDS
+# NOTE: the ssrplus feed is added by the workflow BEFORE "Update base feeds",
+# because feeds update/install run ahead of this script.
 
 echo "diy-part1 complete"
 # ---------------------------------------------------------------------------

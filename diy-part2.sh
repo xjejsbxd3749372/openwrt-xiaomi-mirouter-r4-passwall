@@ -97,7 +97,7 @@ if "define Device/mir4" not in s:
   IMAGE/rootfs0.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
   IMAGE/sysupgrade.tar := sysupgrade-tar | append-metadata
   DEVICE_TITLE := Xiaomi Mi Router 4
-  SUPPORTED_DEVICES += MIR4
+  SUPPORTED_DEVICES += MIR4 xiaomi,mir4
   DEVICE_PACKAGES := kmod-mt7603e kmod-mt76x2e mt_wifi luci-app-mtwifi wpad-mini uboot-envtools kmod-ipt-offload kmod-tcp-bbr zram-swap
 endef
 TARGET_DEVICES += mir4
@@ -121,18 +121,18 @@ def insert_after_case(text, case_line, block):
         raise SystemExit("case terminator missing: " + case_line.strip())
     return text[:end+len("\n		;;")] + block + text[end+len("\n		;;"):]
 
-if "mir4)" not in s:
-    s=insert_after_case(s, "	mir3g)", """\n	mir4)
+if "xiaomi,mir4)" not in s:
+    s=insert_after_case(s, "	mir3g)", """\n	mir4|xiaomi,mir4)
 		ucidef_add_switch "switch0" \\\n			"1:lan:2" "2:lan:1" "4:wan" "6t@eth0"
 		;;\n""")
 
 mac_start=s.find("ramips_setup_macs")
-if "	mir4)" not in s[mac_start:]:
+if "	mir4|xiaomi,mir4)" not in s[mac_start:]:
     pos=s.find("	mir3g)",mac_start)
     if pos<0: raise SystemExit("MAC mir3g anchor missing")
     end=s.find("\n		;;",pos)
     if end<0: raise SystemExit("MAC mir3g terminator missing")
-    block='''\n	mir4)
+    block='''\n	mir4|xiaomi,mir4)
 		lan_mac=$(mtd_get_mac_binary Factory 0xe000)
 		wan_mac=$(mtd_get_mac_binary Factory 0xe006)
 		;;
@@ -154,20 +154,20 @@ if "mir4|" not in s:
     first=s.find(needle)
     if first<0: raise SystemExit("platform mir3g anchor missing")
     line_end=s.find("\n", first)
-    s=s[:line_end+1] + "	mir4|" + bs + "\n" + s[line_end+1:]
+    s=s[:line_end+1] + "	mir4|xiaomi,mir4|" + bs + "\n" + s[line_end+1:]
     second=s.find(needle, line_end+1)
     if second<0: raise SystemExit("platform second mir3g anchor missing")
     line_end=s.find("\n", second)
-    s=s[:line_end+1] + "	mir4|" + bs + "\n" + s[line_end+1:]
+    s=s[:line_end+1] + "	mir4|xiaomi,mir4|" + bs + "\n" + s[line_end+1:]
 upg.write_text(s)
 
 s=env.read_text()
-if "	mir4)" not in s:
+if "	mir4|xiaomi,mir4)" not in s:
     pos=s.find("mir3g)")
     if pos<0: raise SystemExit("envtools mir3g anchor missing")
     end=s.find("\n	;;",pos)
     if end<0: raise SystemExit("envtools mir3g terminator missing")
-    block='''\n	mir4)
+    block='''\n	mir4|xiaomi,mir4)
 	ubootenv_add_uci_config "/dev/mtd1" "0x0" "0x1000" "0x20000"
 	;;
 '''
@@ -191,7 +191,7 @@ EOF
 chmod 0755 "${ACC}"
 grep -q 'compatible = "xiaomi,mir4"' "${DTS}"
 grep -q 'define Device/mir4' "${IMAGE}"
-grep -q 'SUPPORTED_DEVICES += MIR4' "${IMAGE}"
+grep -q 'SUPPORTED_DEVICES += MIR4 xiaomi,mir4' "${IMAGE}"
 grep -q 'mir4)' "${NET}"
 grep -q 'mir4|' "${UPG}"
 grep -q 'mir4)' "${ENVTOOLS}"
