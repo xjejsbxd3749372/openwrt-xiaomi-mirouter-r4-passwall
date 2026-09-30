@@ -137,3 +137,67 @@ for root in ["package/mtk-closed"]:
 print(f"  access_ok: {total} call(s) fixed for kernel 4.14")
 PYACC
 echo "diy-part1 kernel-4.14 fixes complete"
+# ---------------------------------------------------------------------------
+# Third batch of kernel-4.14 differences in the same MTK sources.
+#
+# 1) for_each_process() moved to <linux/sched/signal.h> in Linux 4.11, and
+#    <linux/sched.h> no longer pulls it in -> "implicit declaration of
+#    function 'for_each_process'", which then also breaks the statement.
+#
+# 2) This driver typedefs TIMER_FUNCTION as void (*)(struct timer_list *)
+#    (the post-4.15 callback signature), but the code path it takes on
+#    kernels older than 4.19 still does the pre-4.15 setup:
+#        init_timer(pTimer);
+#        pTimer->data = (unsigned long)data;
+#        pTimer->function = function;      <-- incompatible pointer type
+#    On 4.14 timer_list.function is still void (*)(unsigned long) and the
+#    kernel hands it timer_list.data as the argument. Feed it the timer_list
+#    itself instead: a post-4.15 style callback expects exactly that, so the
+#    callback keeps working instead of being called with the wrong argument
+#    (silencing the warning alone would turn this into a runtime crash).
+python3 - <<'PYK414'
+import pathlib, re
+
+roots = pathlib.Path("package/mtk-closed")
+sched_inc = "#include <linux/sched/signal.h>"
+n_sched = 0
+
+# --- 1) for_each_process / for_each_thread ---------------------------------
+for p in sorted(roots.rglob("*.c")):
+    s = p.read_text(encoding="utf-8", errors="ignore")
+    if not re.search(r"\bfor_each_(process|thread)\b", s):
+        continue
+    if sched_inc in s:
+        continue
+    m = re.search(r"^#include\s+[<\"]", s, re.M)
+    if not m:
+        continue
+    p.write_text(s[:m.start()] + sched_inc + "\n" + s[m.start():], encoding="utf-8")
+    print(f"  <linux/sched/signal.h> added: {p}")
+    n_sched += 1
+
+# --- 2) pre-4.15 timer setup on a post-4.15 typedef -----------------------
+new_style = "typedef void (*TIMER_FUNCTION)(struct timer_list *)"
+has_new_typedef = any(
+    new_style in (p.read_text(encoding="utf-8", errors="ignore"))
+    for p in roots.rglob("*.h")
+)
+n_timer = 0
+if has_new_typedef:
+    trig = re.compile(r"pTimer->function\s*=\s*function\s*;")
+    for p in sorted(roots.rglob("*.c")):
+        s = p.read_text(encoding="utf-8", errors="ignore")
+        if not trig.search(s):
+            continue
+        s = re.sub(r"pTimer->data\s*=\s*\(unsigned long\)data\s*;",
+                   "pTimer->data = (unsigned long)pTimer;", s)
+        s = trig.sub("pTimer->function = (void (*)(unsigned long))function;", s)
+        p.write_text(s, encoding="utf-8")
+        print(f"  timer compat applied: {p}")
+        n_timer += 1
+else:
+    print("  WARNING: new-style TIMER_FUNCTION typedef not found, timer patch skipped")
+
+print(f"  kernel-4.14 round 3: sched.h={n_sched} timer={n_timer}")
+PYK414
+echo "diy-part1 kernel-4.14 fixes complete"
