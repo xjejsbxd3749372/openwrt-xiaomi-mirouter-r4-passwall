@@ -172,6 +172,16 @@ jobs:
             if [ -e "$ROOTFS/$f" ]; then echo "   OK      $f"; else echo "   MISSING $f"; fail=1; fi
           done
 
+
+          echo "-- 1b) the status LED has to be configured for this board"
+          if grep -q 'mir4:blue:status' "$ROOTFS/etc/board.d/01_leds"; then
+            echo "   OK   01_leds carries the mir4 case"
+          else
+            echo "   FAIL 01_leds has no mir4 case -> board.json gets no led key"
+            fail=1
+          fi
+          grep -n 'mir4|xiaomi,mir4)' -A2 "$ROOTFS/etc/board.d/01_leds" | sed 's/^/   /'
+
           echo "-- 2) run the real first-boot script inside the target rootfs"
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-user-static >/dev/null
           sudo cp -f /usr/bin/qemu-mipsel-static "$ROOTFS/usr/bin/"

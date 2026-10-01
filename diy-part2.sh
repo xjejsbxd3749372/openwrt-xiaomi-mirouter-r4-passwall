@@ -3,6 +3,25 @@ set -euo pipefail
 ROOT="$(pwd)"
 DTS="${ROOT}/target/linux/ramips/dts/MIR4.dts"
 IMAGE="${ROOT}/target/linux/ramips/image/mt7621.mk"
+# 01_leds has no entry for this board, so /etc/board.json never got a "led"
+# key: config_generate then wrote no "config led" into /etc/config/system and
+# /etc/init.d/led had nothing to apply, leaving the GPIO at its default
+# brightness of 0 (dark).  Both spellings of the board name are matched,
+# mirroring what was done for 02_network/platform.sh.
+LED="${ROOT}/target/linux/ramips/base-files/etc/board.d/01_leds"
+test -f "${LED}"
+if ! grep -q 'mir4:red:status' "${LED}"; then
+  LED_ANCHOR='case \$board in'
+  LED_POS=$(grep -n "^${LED_ANCHOR}\$" "${LED}" | head -1 | cut -d: -f1)
+  test -n "${LED_POS}"
+  sed -i "${LED_POS}a\\
+\\tmir4|xiaomi,mir4)\\
+\\t\\tucidef_set_led_default \"status_blue\" \"status\" \"mir4:blue:status\" \"1\"\\
+\\t\\t;;" "${LED}"
+fi
+grep -q 'mir4:blue:status' "${LED}"
+echo "01_leds patched:"; grep -A3 'mir4|xiaomi,mir4)' "${LED}" | head -5
+
 NET="${ROOT}/target/linux/ramips/base-files/etc/board.d/02_network"
 UPG="${ROOT}/target/linux/ramips/base-files/lib/upgrade/platform.sh"
 ENVTOOLS="${ROOT}/package/boot/uboot-envtools/files/ramips"
@@ -18,13 +37,19 @@ cat > "${DTS}" <<'EOF'
 / {
   compatible = "xiaomi,mir4", "mediatek,mt7621-soc";
   model = "Xiaomi Mi Router 4";
+  aliases {
+    led-boot = &led_status_yellow;
+    led-failsafe = &led_status_red;
+    led-running = &led_status_blue;
+    led-upgrade = &led_status_yellow;
+  };
   memory@0 { device_type = "memory"; reg = <0x0 0x8000000>; };
   chosen { bootargs = "console=ttyS0,115200n8"; };
   gpio-leds {
     compatible = "gpio-leds";
-    red { label = "mir4:red:status"; gpios = <&gpio0 6 GPIO_ACTIVE_LOW>; };
-    blue { label = "mir4:blue:status"; gpios = <&gpio0 8 GPIO_ACTIVE_LOW>; };
-    yellow { label = "mir4:yellow:status"; gpios = <&gpio0 10 GPIO_ACTIVE_LOW>; };
+    led_status_red: red { label = "mir4:red:status"; gpios = <&gpio0 6 GPIO_ACTIVE_LOW>; };
+    led_status_blue: blue { label = "mir4:blue:status"; gpios = <&gpio0 8 GPIO_ACTIVE_LOW>; };
+    led_status_yellow: yellow { label = "mir4:yellow:status"; gpios = <&gpio0 10 GPIO_ACTIVE_LOW>; };
   };
   gpio-keys-polled {
     compatible = "gpio-keys-polled";
@@ -127,6 +152,8 @@ MIR4UCI
 say "lan-ip=$(uci -q get network.lan.ipaddr)"
 
 # --- web interface ------------------------------------------------------
+echo "[mir4-led] present: $(ls -d /sys/class/leds/mir4:* 2>/dev/null | sed 's|^.*/||' | tr '
+' ' ')"
 if [ -x /usr/sbin/uhttpd ]; then
 	say "uhttpd=PRESENT $(command -v uhttpd)"
 else
@@ -167,6 +194,18 @@ start() {
 	fi
 	echo "[mir4-luci-check] url=http://$(uci -q get network.lan.ipaddr)/ user=root password=password"
 }
+	# Blue status LED.  Nothing configured it: 01_leds had no mir4 case, so
+	# board.json never got a "led" key, config_generate never wrote a
+	# "config led" into /etc/config/system and /etc/init.d/led had nothing to
+	# apply - the gpio stayed at the kernel's default brightness of 0.
+	# Forcing it here is the belt to the 01_leds braces.
+	for led in /sys/class/leds/mir4:blue:status /sys/class/leds/mir4:red:status; do
+		[ -e "$led/brightness" ] || { echo "[mir4-led] $(basename $led)=ABSENT"; continue; }
+		echo none > "$led/trigger" 2>/dev/null || true
+		max=$(cat "$led/max_brightness" 2>/dev/null || echo 1)
+		echo "$max" > "$led/brightness" 2>/dev/null || true
+		echo "[mir4-led] $(basename $led)=ON brightness=$(cat "$led/brightness")"
+	done
 MIR4CHK
 chmod 755 "${MIR4_ETC}/uci-defaults/99-mir4-defaults" "${MIR4_ETC}/init.d/mir4-luci-check"
 test -f "${MIR4_ETC}/uci-defaults/99-mir4-defaults"
