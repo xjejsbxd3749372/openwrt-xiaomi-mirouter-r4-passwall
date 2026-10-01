@@ -486,5 +486,90 @@ $(eval $(call BuildPackage,xray-example))
 XRAYMK
 
 test -s "${XDIR}/files/xray"
+# ---------------------------------------------------------------------------
+# dns2socks: vendored source, zero download.
+#
+# luci-app-passwall hard-depends on +dns2socks, so it cannot be dropped.
+# Upstream is `PKG_SOURCE_URL:=@SF/dns2socks` (SourceForge) and that project's
+# origin has been returning HTTP 522 - "connection timed out" at the edge -
+# which killed three consecutive builds at `dl/SourceCode.zip` (runs 75 and
+# both reruns), while runs 62/71/74 downloaded it fine.
+#
+# The two files below come from independent GitHub clones of the SourceForge
+# tree (kongfl888 = auto-sync, rampageX = clone); both are byte-identical to
+# each other, which is what the pinned hashes below attest. The Makefile is
+# rewritten so PKG_SOURCE/URL are gone entirely - the same mechanism the
+# prebuilt Xray above uses - so no package download happens at all.
+DDIR="${ROOT}/package/passwall/dns2socks"
+test -f "${DDIR}/Makefile"
+mkdir -p "${DDIR}/files"
+curl -fsSL --retry 3 --connect-timeout 20 \
+  -o "${DDIR}/files/DNS2SOCKS.c" \
+  https://raw.githubusercontent.com/kongfl888/dns2socks/master/DNS2SOCKS/DNS2SOCKS.c
+curl -fsSL --retry 3 --connect-timeout 20 \
+  -o "${DDIR}/files/stdafx.h" \
+  https://raw.githubusercontent.com/kongfl888/dns2socks/master/DNS2SOCKS/stdafx.h
+echo "c3ffe1af88c619b11e248790e998399aa194a5dd4cd0cf7ada66e947ace9c27e  ${DDIR}/files/DNS2SOCKS.c" | sha256sum -c -
+echo "731d961442e8f94efd98606e01f5ad4ed35c6b0b0a1ec40ec2da2add8ae297ea  ${DDIR}/files/stdafx.h" | sha256sum -c -
+grep -q 'DNS2SOCKS V2.1' "${DDIR}/files/DNS2SOCKS.c"
+grep -q '_WIN32' "${DDIR}/files/stdafx.h"
+
+cat > "${DDIR}/Makefile" <<'DNSMK'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=dns2socks
+PKG_VERSION:=2.1
+PKG_RELEASE:=2
+
+# Upstream is @SF/dns2socks, whose origin returned HTTP 522 and failed the
+# build three times at dl/SourceCode.zip. The source is vendored in files/,
+# so this package downloads nothing.
+PKG_LICENSE:=BSD-3-Clause
+PKG_MAINTAINER:=ghostmaker
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/dns2socks
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=IP Addresses and Names
+  TITLE:=DNS to SOCKS or HTTP proxy
+  URL:=http://dns2socks.sourceforge.net/
+  DEPENDS:=+libpthread
+endef
+
+define Package/dns2socks/description
+  A command line utility to resolve DNS requests via a SOCKS tunnel like Tor
+  or a HTTP proxy.
+endef
+
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)/DNS2SOCKS
+	$(CP) $(CURDIR)/files/DNS2SOCKS.c $(PKG_BUILD_DIR)/DNS2SOCKS/
+	$(CP) $(CURDIR)/files/stdafx.h $(PKG_BUILD_DIR)/DNS2SOCKS/
+endef
+
+define Build/Compile
+	$(TARGET_CC) \
+		$(TARGET_CFLAGS) \
+		$(TARGET_CPPFLAGS) \
+		$(FPIC) \
+		-o $(PKG_BUILD_DIR)/DNS2SOCKS/dns2socks \
+		$(PKG_BUILD_DIR)/DNS2SOCKS/DNS2SOCKS.c \
+		$(TARGET_LDFLAGS) -pthread
+endef
+
+define Package/dns2socks/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/DNS2SOCKS/dns2socks $(1)/usr/bin/dns2socks
+endef
+
+$(eval $(call BuildPackage,dns2socks))
+DNSMK
+
+test -f "${DDIR}/Makefile"
+! grep -q 'PKG_SOURCE' "${DDIR}/Makefile"
+test -f "${DDIR}/files/DNS2SOCKS.c"
+echo "dns2socks source vendored - no download (was the 3-run build breaker)"
 test -f "${XDIR}/Makefile"
 echo "xray-core 26.9.9 (prebuilt) installed"
