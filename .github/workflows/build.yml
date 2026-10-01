@@ -155,3 +155,67 @@ jobs:
           name: Xiaomi Mi Router 4 OpenWrt 18.06 MTK HWNAT PassWall ${{ github.run_number }}
           generate_release_notes: true
           files: openwrt/bin/targets/ramips/mt7621/*
+      - name: Verify LuCI starts
+        if: success()
+        working-directory: openwrt
+        run: |
+          set -uo pipefail
+          fail=0
+          ROOTFS=$(find "$(pwd)/build_dir" -maxdepth 2 -type d -name 'root-*' | head -1)
+          echo "== target rootfs: ${ROOTFS:-<not found>}"
+          if [ -z "$ROOTFS" ]; then echo "::error::no root-* dir under build_dir"; exit 1; fi
+
+          echo "-- 1) files the web interface needs"
+          for f in usr/sbin/uhttpd etc/init.d/uhttpd etc/config/uhttpd \
+                   usr/lib/lua/luci/dispatcher.lua www \
+                   etc/uci-defaults/99-mir4-defaults etc/init.d/mir4-luci-check; do
+            if [ -e "$ROOTFS/$f" ]; then echo "   OK      $f"; else echo "   MISSING $f"; fail=1; fi
+          done
+
+          echo "-- 2) run the real first-boot script inside the target rootfs"
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-user-static >/dev/null
+          sudo cp -f /usr/bin/qemu-mipsel-static "$ROOTFS/usr/bin/"
+          sudo mkdir -p "$ROOTFS/var/run" "$ROOTFS/var/log" "$ROOTFS/proc" "$ROOTFS/dev" "$ROOTFS/tmp"
+          sudo chroot "$ROOTFS" /usr/bin/qemu-mipsel-static /bin/sh \
+              /etc/uci-defaults/99-mir4-defaults 2>&1 | tee "$GITHUB_WORKSPACE/firstboot.log"
+          for want in "root-password=SET" "lan-ip=192.168.5.1" "uhttpd=PRESENT" "luci-dispatcher=PRESENT"; do
+            if grep -q "$want" "$GITHUB_WORKSPACE/firstboot.log"; then
+              echo "   OK   $want"
+            else
+              echo "   FAIL $want"; fail=1
+            fi
+          done
+
+          echo "-- 3) start ubusd + uhttpd and fetch the LuCI entry page"
+          sudo chroot "$ROOTFS" /usr/bin/qemu-mipsel-static /sbin/ubusd >/tmp/ubusd.log 2>&1 &
+          sleep 1
+          sudo chroot "$ROOTFS" /usr/bin/qemu-mipsel-static /usr/sbin/uhttpd \
+               -p 8099 -h /www -t 1 -T 30 -n 2 -N 2 >/tmp/uhttpd.log 2>&1 &
+          sleep 6
+          code=$(curl -sS -o "$GITHUB_WORKSPACE/luci.html" -w '%{http_code}' \
+                      --max-time 10 "http://127.0.0.1:8099/" || echo 000)
+          echo "   HTTP $code"
+          echo "   ---- first 400 bytes of the response ----"
+          head -c 400 "$GITHUB_WORKSPACE/luci.html" 2>/dev/null || true
+          echo
+          echo "   ---- uhttpd log ----"; cat /tmp/uhttpd.log 2>/dev/null || true
+          echo "   ---- ubusd log ----";  cat /tmp/ubusd.log  2>/dev/null || true
+          if [ "$code" = "000" ]; then echo "   FAIL the web server did not answer"; fail=1; fi
+
+          if [ "$fail" = "0" ]; then
+            echo "LuCI verification: PASS"
+          else
+            echo "::error::LuCI verification failed"
+            exit 1
+          fi
+
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-verify-${{ github.run_number }}
+          path: |
+            firstboot.log
+            luci.html
+          if-no-files-found: ignore
+          retention-days: 30
