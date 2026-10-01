@@ -159,6 +159,8 @@ jobs:
         if: success()
         working-directory: openwrt
         run: |
+          exec > >(tee -a "$GITHUB_WORKSPACE/verify.log") 2>&1
+          : > "$GITHUB_WORKSPACE/verify.log"
           set -uo pipefail
           fail=0
           ROOTFS=$(find "$(pwd)/build_dir" -maxdepth 2 -type d -name 'root-*' | head -1)
@@ -186,6 +188,17 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-user-static >/dev/null
           sudo cp -f /usr/bin/qemu-mipsel-static "$ROOTFS/usr/bin/"
           sudo mkdir -p "$ROOTFS/var/run" "$ROOTFS/var/log" "$ROOTFS/proc" "$ROOTFS/dev" "$ROOTFS/tmp"
+          # boot() runs /bin/config_generate (which calls board_detect and writes
+          # /etc/board.json plus /etc/config/network|system) BEFORE uci_apply_defaults.
+          # The chroot has neither, so the LAN assertion would fail for a reason that
+          # does not exist on the device.
+          sudo mount -t proc proc "$ROOTFS/proc" 2>/dev/null || true
+          sudo chroot "$ROOTFS" /usr/bin/qemu-mipsel-static /bin/config_generate || true
+          if [ ! -s "$ROOTFS/etc/config/network" ]; then
+            echo "   (config_generate wrote no network config; installing a minimal one)"
+            printf "config interface 'lan'\n\toption ifname 'eth0'\n\toption proto 'static'\n" \
+              | sudo tee "$ROOTFS/etc/config/network" >/dev/null
+          fi
           sudo chroot "$ROOTFS" /usr/bin/qemu-mipsel-static /bin/sh \
               /etc/uci-defaults/99-mir4-defaults 2>&1 | tee "$GITHUB_WORKSPACE/firstboot.log"
           for want in "root-password=SET" "lan-ip=192.168.5.1" "uhttpd=PRESENT" "luci-dispatcher=PRESENT"; do
@@ -226,6 +239,7 @@ jobs:
           name: luci-verify-${{ github.run_number }}
           path: |
             firstboot.log
+            verify.log
             luci.html
           if-no-files-found: ignore
           retention-days: 30
